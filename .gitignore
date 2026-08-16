@@ -1,0 +1,26 @@
+# Данные клиентов — не публикуются
+campaigns/
+reports/
+notes/
+
+# База справки Яндекс Директа — отдельный репозиторий, см. README
+.claude/skills/yandex-direct/docs/
+.claude/skills/yandex-direct-analyst/docs
+
+# Локальные настройки и служебное
+.claude/settings.local.json
+.claude/launch.json
+url.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ОС и редакторы
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
