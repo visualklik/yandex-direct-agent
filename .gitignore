@@ -1,11 +1,15 @@
 # Данные клиентов — не публикуются
 campaigns/
 reports/
+e-16512855/
 notes/
 
 # База справки Яндекс Директа — отдельный репозиторий, см. README
 .claude/skills/yandex-direct/docs/
 .claude/skills/yandex-direct-analyst/docs
+
+# Секреты
+.env
 
 # Локальные настройки и служебное
 .claude/settings.local.json

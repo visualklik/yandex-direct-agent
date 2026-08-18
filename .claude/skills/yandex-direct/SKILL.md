@@ -58,6 +58,7 @@ ls docs/strategies/                               # обзор раздела
 | Статистика, отчёты | `docs/statistics/` |
 | Оплата, промокоды | `docs/payments/` |
 | XLS/XLSX, Коммандер, API | `docs/alternative-interfaces/` |
+| **API: комбинаторные объявления (RESPONSIVE_AD, v501)** | `updates/api-responsive-ads.md` |
 | Аукцион, антифрод, технологии | `docs/technologies-and-services/` |
 | Проблемы, ошибки | `docs/troubleshooting/` |
 | Термины | `docs/glossary.md` |
