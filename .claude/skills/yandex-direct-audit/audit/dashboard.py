@@ -504,9 +504,10 @@ def strategy_cell(camp, place):
         bits.append(f"{money(params['WeeklySpendLimit'] / 1e6)}/нед")
     gid = params.get("GoalId")
     if gid:
-        # идентификаторы меньше миллиона — служебные цели Директа (вовлечённые сессии и т. п.),
-        # а не цели Метрики: показывать их как обычную цель клиента вводит в заблуждение
-        bits.append(f"служебная цель Директа №{gid}" if gid < 1_000_000 else f"цель №{gid}")
+        # У целей Метрики идентификаторы восьми-девятизначные. Короткий id — не клиентская цель;
+        # что именно за ним стоит, из API не видно, поэтому помечаем к проверке, а не называем.
+        bits.append(f"цель №{gid} — проверить в интерфейсе" if gid < 1_000_000
+                    else f"цель №{gid}")
     extra = (checks.body(camp).get("PriorityGoals") or {}).get("Items") or []
     if params and len(extra) > 1:
         bits.append(f"ключевых целей {len(extra)}")
