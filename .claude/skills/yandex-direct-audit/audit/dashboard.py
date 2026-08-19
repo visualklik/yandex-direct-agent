@@ -341,6 +341,9 @@ td{padding:9px 12px;border-bottom:1px solid var(--line)}
 tbody tr:last-child td{border-bottom:0}
 td.r,th.r{text-align:right}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.strat{font-size:13px;line-height:1.35}
+.strat.off{color:var(--muted)}
+.strat-meta{display:block;font-size:11px;color:var(--muted);margin-top:2px}
 .note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:11px 14px;
  border-radius:0 8px 8px 0;font-size:13px;margin:14px 0 0}
 .note.warn{border-color:var(--p1);background:var(--p1-bg)}
@@ -460,6 +463,59 @@ def section_verdict(a, score, grade, lines, total, cpa, target, live_n):
             + f'</ul></div></div><div class="kpis">{kh}</div></section>')
 
 
+STRATEGY_NAMES = {
+    "SERVING_OFF": "показы отключены",
+    "NETWORK_DEFAULT": "как на Поиске",
+    "HIGHEST_POSITION": "Ручное управление ставками",
+    "WB_MAXIMUM_CLICKS": "Максимум кликов",
+    "AVERAGE_CPC": "Максимум кликов · средняя цена клика",
+    "WB_MAXIMUM_CONVERSION_RATE": "Максимум конверсий",
+    "AVERAGE_CPA": "Максимум конверсий · средняя цена конверсии",
+    "PAY_FOR_CONVERSION": "Максимум конверсий · оплата за конверсии",
+    "AVERAGE_ROI": "Максимум конверсий · ДРР",
+    "AVERAGE_CRR": "Максимум конверсий · ДРР",
+    "PAY_FOR_CONVERSION_CRR": "Оплата за конверсии · ДРР",
+    "WB_MAXIMUM_APP_INSTALLS": "Максимум установок приложения",
+    "AVERAGE_CPI": "Максимум установок · средняя цена установки",
+    "MAXIMUM_IMPRESSIONS": "Максимум показов по минимальной цене",
+    "MAXIMUM_COVERAGE": "Максимальный охват",
+    "MAXIMUM_IMPRESSION_SHARE": "Максимум показов по минимальной цене",
+    "WB_DECREASED_PRICE_FOR_REPEATED_IMPRESSIONS": "Снижение цены повторных показов",
+    "CP_AVERAGE_CPV": "Оплата за просмотры",
+    "PORTFOLIO": "Пакетная стратегия",
+}
+
+
+def strategy_cell(camp, place):
+    """Человеческое название стратегии и её ограничения. API-код в отчёт не выносим."""
+    bs = checks.body(camp).get("BiddingStrategy") or {}
+    blk = bs.get(place) or {}
+    code = blk.get("BiddingStrategyType") or "—"
+    name = STRATEGY_NAMES.get(code, code)
+    params = next((v for v in blk.values() if isinstance(v, dict)), {})
+    bits = []
+    if params.get("Cpa"):
+        bits.append(f"цена конверсии {money(params['Cpa'] / 1e6)}")
+    if params.get("AverageCpc"):
+        bits.append(f"клик до {money(params['AverageCpc'] / 1e6)}")
+    if params.get("Crr"):
+        bits.append(f"ДРР {params['Crr']}%")
+    if params.get("WeeklySpendLimit"):
+        bits.append(f"{money(params['WeeklySpendLimit'] / 1e6)}/нед")
+    gid = params.get("GoalId")
+    if gid:
+        # идентификаторы меньше миллиона — служебные цели Директа (вовлечённые сессии и т. п.),
+        # а не цели Метрики: показывать их как обычную цель клиента вводит в заблуждение
+        bits.append(f"служебная цель Директа №{gid}" if gid < 1_000_000 else f"цель №{gid}")
+    extra = (checks.body(camp).get("PriorityGoals") or {}).get("Items") or []
+    if params and len(extra) > 1:
+        bits.append(f"ключевых целей {len(extra)}")
+    cls = " off" if code == "SERVING_OFF" else ""
+    return (f'<div class="strat{cls}">{E(name)}'
+            + (f'<span class="strat-meta">{E(" · ".join(bits))}</span>' if bits else "")
+            + "</div>")
+
+
 target_given = [False]
 
 
@@ -537,13 +593,13 @@ def section_settings(live, camps):
                                  ("ENABLE_AREA_OF_INTEREST_TARGETING", "NO", "расшир. гео")):
             v = checks.setting(c, opt)
             flags.append((label, v == good, v))
-        rows.append((c["Name"], st.get("Search") or "—", st.get("Network") or "—",
+        rows.append((c["Name"], strategy_cell(c, "Search"), strategy_cell(c, "Network"),
                      "да" if b.get("CounterIds") else "нет",
                      "да" if b.get("PriorityGoals") else "нет", flags,
                      len((c.get("NegativeKeywords") or {}).get("Items") or []),
                      len((c.get("ExcludedSites") or {}).get("Items") or [])))
     tbl = "".join(
-        f'<tr><td>{E(name)}</td><td class="mono">{E(s)}</td><td class="mono">{E(nw)}</td>'
+        f'<tr><td>{E(name)}</td><td>{s}</td><td>{nw}</td>'
         f'<td>{cnt}</td><td>{goals}</td>'
         + "".join(f'<td><span class="tag {"ok" if ok else "p1"}">{E(str(v))}</span></td>'
                   for _, ok, v in fl)
@@ -552,8 +608,8 @@ def section_settings(live, camps):
     return (f'<section id="settings"><h2><span class="num">04</span>Настройки активных кампаний</h2>'
             f'<p class="lede">Слепок значений, а не пересказ. Жёлтым помечено то, что отличается '
             f'от рекомендованного для этого типа кампании.</p>'
-            f'<div class="tbl"><table><thead><tr><th>Кампания</th><th>Стратегия Поиск</th>'
-            f'<th>Сети</th><th>Счётчик</th><th>Цели</th><th>Мониторинг</th><th>Разметка</th>'
+            f'<div class="tbl"><table><thead><tr><th>Кампания</th><th>Стратегия на Поиске</th>'
+            f'<th>Стратегия в сетях</th><th>Счётчик</th><th>Цели</th><th>Мониторинг</th><th>Разметка</th>'
             f'<th>Расш. гео</th><th class="r">Минус-слов</th><th class="r">Запрещ. площадок</th>'
             f'</tr></thead><tbody>{tbl}</tbody></table></div></section>')
 
