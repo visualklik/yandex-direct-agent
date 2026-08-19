@@ -549,9 +549,15 @@ LABELS = {
     "GENDER_MALE": "Мужчины", "GENDER_FEMALE": "Женщины", "GENDER_UNKNOWN": "Пол неизвестен",
     "AGE_0_17": "до 17", "AGE_18_24": "18–24", "AGE_25_34": "25–34", "AGE_35_44": "35–44",
     "AGE_45_54": "45–54", "AGE_55": "55+", "UNKNOWN": "не определено",
+    "KEYWORD": "Ключевые слова", "AUTOTARGETING": "Автотаргетинг",
+    "RETARGETING": "Ретаргетинг и аудитории", "DYNAMIC_TEXT_AD": "Динамические объявления",
+    "SMART_BANNER": "Смарт-баннеры", "USER_PROFILE": "Профиль пользователя",
+    "OFFER_RETARGETING": "Товарный ретаргетинг", "WEBPAGE": "Условия на страницы сайта",
 }
 
-SEGMENTS = [("segment", "AdNetworkType", "Поиск и сети"), ("device", "Device", "Устройства"),
+SEGMENTS = [("segment", "AdNetworkType", "Поиск и сети"),
+            ("targeting", "CriterionType", "Тип таргетинга"),
+            ("device", "Device", "Устройства"),
             ("gender", "Gender", "Пол"), ("age", "Age", "Возраст"),
             ("geo", "LocationOfPresenceName", "Города")]
 

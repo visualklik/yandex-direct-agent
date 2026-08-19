@@ -121,7 +121,12 @@ curl -s -X POST https://api.direct.yandex.com/json/v5/reports \
 - Для конверсий по конкретной цели добавить `Goals` и `AttributionModels` в `SelectionCriteria`;
   без них `Conversions` считаются по настройкам аккаунта, и цифра не совпадёт с отчётом по цели.
 - Другие полезные срезы того же отчёта: `ExternalNetworkName` (внешние сети),
-  `MobilePlatform`, `Device`, `TargetingLocationName`, `Age`, `Gender`.
+  `MobilePlatform`, `Device`, `TargetingLocationName`, `LocationOfPresenceName`, `Age`, `Gender`,
+  `CriterionType`.
+- **`CriterionType` разделяет типы таргетинга**: `KEYWORD`, `AUTOTARGETING`, `RETARGETING`
+  и далее по типам кампаний (`DYNAMIC_TEXT_AD`, `SMART_BANNER`, `WEBPAGE`, `USER_PROFILE`,
+  `OFFER_RETARGETING`). Это единственный дешёвый способ увидеть, сколько денег забирает
+  автотаргетинг против собранной семантики — на уровне ключей такой разбивки нет.
 
 ## Запись запрещённых площадок
 
