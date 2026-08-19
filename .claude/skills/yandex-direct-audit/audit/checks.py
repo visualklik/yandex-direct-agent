@@ -130,6 +130,18 @@ def main():
                                                                               "NETWORK_DEFAULT"):
             add(INFO, "Поиск и сети в одной кампании", n)
 
+    # Валидность счётчиков API не отдаёт. Косвенный признак: счётчик стоит в одной кампании,
+    # тогда как остальные разделяют общий набор. Это повод посмотреть глазами, а не находка.
+    counter_use = defaultdict(set)
+    for c in live.values():
+        for cid in (body(c).get("CounterIds") or {}).get("Items") or []:
+            counter_use[cid].add(c["Id"])
+    lonely = sorted(cid for cid, used in counter_use.items() if len(used) == 1)
+    if lonely and len(counter_use) > len(lonely):
+        add(INFO, f"счётчиков Метрики, стоящих лишь в одной кампании: {len(lonely)}",
+            f"{', '.join(str(x) for x in lonely[:8])} — проверить в интерфейсе, "
+            f"нет ли пометки «Счётчик не найден»: API валидность не показывает")
+
     by_group_ads = defaultdict(list)
     for a in ads:
         if a.get("State") == "ON" and a["CampaignId"] in live:
