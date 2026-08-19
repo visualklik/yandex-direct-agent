@@ -165,3 +165,30 @@ curl -s -X POST https://api.direct.yandex.com/json/v5/reports \
   наборы `NegativeKeywordSharedSetIds` (у кампании и у группы). Проверять все три.
 - **Тип объекта кампании** зависит от типа: `TextCampaign`, `UnifiedCampaign`, `SmartCampaign`
   и так далее. Универсальный доступ — взять единственный ключ, оканчивающийся на `Campaign`.
+
+## Мастер кампаний: статистика есть, настроек нет
+
+Проверено на аккаунте, где Мастер кампаний работает и тратит деньги:
+
+| Запрос | Результат |
+|---|---|
+| `campaigns.get` со всеми полями | кампании нет в выдаче |
+| `campaigns.get` с явным `SelectionCriteria.Ids: [<её Id>]` | `{"Campaigns": []}` |
+| то же в `v501` | `{"Campaigns": []}` |
+| `adgroups.get` по её `CampaignId` | `{"AdGroups": []}` |
+| `ads.get` по её `CampaignId` | пусто |
+| `reports` (`CAMPAIGN_PERFORMANCE_REPORT`) | **кампания есть**: Id, название, показы, клики, расход, конверсии |
+
+Перечисление `SelectionCriteria.Types` принимает `TEXT_CAMPAIGN, MOBILE_APP_CAMPAIGN,
+DYNAMIC_TEXT_CAMPAIGN, CPM_BANNER_CAMPAIGN (+4 подтипа), SMART_CAMPAIGN, UNIFIED_CAMPAIGN,
+MAX_ADS_CAMPAIGN` — отдельного типа для Мастера кампаний в списке нет.
+
+**Следствия для аудита:**
+
+1. Настройки Мастера проверяются только глазами в интерфейсе. Массовых правок по API у него нет.
+2. Слепок аккаунта неполон, и об этом надо сказать в отчёте. Сверять список `CampaignId`
+   из отчёта со списком из `campaigns.get`: то, что есть в статистике и нет в слепке, —
+   кампании вне зоны видимости аудита. `dashboard.py` делает это сам и выводит красную плашку
+   с их долей расхода.
+3. Запрещённых площадок у Мастера нет в принципе (`docs/campaigns/blocked-sites.md`),
+   так что блок про чистку РСЯ к нему неприменим.

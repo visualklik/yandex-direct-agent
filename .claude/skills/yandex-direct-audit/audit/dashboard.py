@@ -149,9 +149,15 @@ def build(a):
     days = tsv(a.days, "Date")
     places = tsv(a.placements, "Placement")
 
+    # Мастер кампаний в campaigns.get не отдаётся: в статистике кампания есть, в слепке её нет.
+    # Молча потерять её нельзя — это может быть заметная доля расхода без единой проверенной настройки.
+    known = {str(i) for i in camps}
+    invisible = {}
     agg = defaultdict(lambda: dict(cost=0.0, clicks=0.0, imps=0.0, conv=0.0))
     for r in perf:
         k = r.get("CampaignName") or r.get("CampaignId")
+        if r.get("CampaignId") and str(r["CampaignId"]) not in known:
+            invisible[k] = r["CampaignId"]
         d = agg[k]
         d["cost"] += num(r.get("Cost"))
         d["clicks"] += num(r.get("Clicks"))
@@ -187,9 +193,12 @@ def build(a):
                 "date": r.get("Date")} for r in sorted(days, key=lambda r: r.get("Date", ""))]
 
     pl = place_block(places, total)
+    inv_cost = sum(agg[k]["cost"] for k in invisible)
+    inv = dict(names=list(invisible), cost=inv_cost,
+               share=inv_cost / total["cost"] * 100 if total["cost"] else 0) if invisible else None
 
     return render(a, live, camps, findings, score, grade, total, cpa, target,
-                  camp_rows, day_pts, net, pl)
+                  camp_rows, day_pts, net, pl, inv)
 
 
 def collect_findings(snap):
@@ -357,7 +366,7 @@ footer{color:var(--muted);font-size:12px;margin-top:22px;text-align:center}
 
 
 def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows,
-           day_pts, net, pl):
+           day_pts, net, pl, inv=None):
     crit = [f for f in findings if f["level"] == checks.CRIT]
     warn = [f for f in findings if f["level"] == checks.WARN]
     info = [f for f in findings if f["level"] == checks.INFO]
@@ -401,7 +410,7 @@ def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows
                   f'<p class="lede">Порядок по влиянию на деньги. P0 — теряется бюджет или '
                   f'данные прямо сейчас, P1 — ограничивает результат, P2 — даст прирост, но не горит.</p>'
                   f'<div class="actions">{"".join(acts)}</div></section>')
-    blocks.append(section_campaigns(camp_rows, day_pts, net_parts, target))
+    blocks.append(section_campaigns(camp_rows, day_pts, net_parts, target, inv))
     if pl:
         blocks.append(section_places(pl))
     blocks.append(section_settings(live, camps))
@@ -520,7 +529,7 @@ def strategy_cell(camp, place):
 target_given = [False]
 
 
-def section_campaigns(rows, day_pts, net_parts, target):
+def section_campaigns(rows, day_pts, net_parts, target, inv=None):
     if not rows:
         return ""
     bar_rows = [{"name": r["name"], "cost": r["cost"],
@@ -533,6 +542,11 @@ def section_campaigns(rows, day_pts, net_parts, target):
     over = [r for r in rows if target and r["cpa"] > target * 1.5 and r["conv"] >= 5]
     if not target_given[0]:
         over = []
+    inv_note = (f'<p class="note crit">Кампании вне слепка настроек: '
+                f'{", ".join(E(x) for x in inv["names"])} — {money(inv["cost"])}, '
+                f'{inv["share"]:.0f}% расхода. Мастер кампаний не отдаётся в `campaigns.get`, '
+                f'поэтому её настройки в аудит не попали: проверять в интерфейсе руками.</p>'
+                if inv else "")
     note = (f'<p class="note warn">Выше целевого CPA в полтора раза и больше: '
             f'{", ".join(E(r["name"]) for r in over)}.</p>' if over else "")
     return (f'<section id="camps"><h2><span class="num">02</span>Где деньги</h2>'
@@ -540,7 +554,7 @@ def section_campaigns(rows, day_pts, net_parts, target):
             f'столбики — конверсии: расхождение формы линий и есть повод копать.</p>'
             f'<div class="cols"><div>{bars(bar_rows, "name", "cost", "cpa")}</div>'
             f'<div>{donut(net_parts) if net_parts else ""}</div></div>'
-            f'{sparkline(day_pts)}{note}'
+            f'{sparkline(day_pts)}{inv_note}{note}'
             f'<details><summary>Таблица по всем кампаниям ({len(rows)})</summary><div class="tbl">'
             f'<table><thead><tr><th>Кампания</th><th class="r">Клики</th><th class="r">CTR</th>'
             f'<th class="r">Расход</th><th class="r">Конв.</th><th class="r">CPA</th></tr></thead>'
