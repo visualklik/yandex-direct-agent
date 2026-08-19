@@ -22,10 +22,16 @@ maxTurns: 30
 1. Прочитай `SKILL.md` скилла и `audit/settings-checklist.md`.
 2. Сними слепок: `audit/collect.py` (токен и логин — из `.env` окружения проекта).
    Если токена нет — работай по выгрузкам и скриншотам, недостающее помечай «не проверено».
-3. Прогони `audit/checks.py` по слепку — механические находки.
-4. Пройди чеклист руками по тем пунктам, которые скрипт не покрывает.
-5. Площадки РСЯ — по `audit/yan-placements.md` и `audit/placements.py`.
-6. Собери отчёт по `audit/report-template.md`.
+3. Скачай отчёты: `audit/fetch.py --days 30 --out-dir data`.
+4. Прогони `audit/checks.py` по слепку — механические находки.
+5. Проверь посадочные: `audit/urls.py --snapshot snapshot.json --out urls.json`.
+6. Пройди чеклист руками по тем пунктам, которые скрипты не покрывают.
+7. Площадки РСЯ — по `audit/yan-placements.md` и `audit/placements.py`.
+8. Собери отчёт: текстом по `audit/report-template.md`, визуально —
+   `audit/dashboard.py --snapshot snapshot.json --reports data --urls urls.json`.
+
+Готовая последовательность команд — раздел «Полный прогон» в `SKILL.md`.
+Слепок и отчёты на аккаунте из ~30 кампаний занимают около двух минут.
 
 Жёсткие правила:
 
