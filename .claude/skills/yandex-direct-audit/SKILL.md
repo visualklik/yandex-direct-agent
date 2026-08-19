@@ -124,7 +124,8 @@ metadata:
    порогами значимости, отдельно от остального.
 8. **Отчёт.** Текстом — по `audit/report-template.md`; визуально — `audit/dashboard.py`:
    вердикт с оценкой → план правок → где деньги → срезы эффективности → поисковые запросы →
-   площадки → посадочные → настройки.
+   площадки → посадочные → настройки. Для деления запросов на брендовые и небрендовые
+   передать `--brands` со списком написаний бренда, включая опечатки и латиницу.
 9. **Исполнение** — только после «да», через `yandex-direct`, с бэкапом `get` до правки.
 
 ### Полный прогон
@@ -138,7 +139,8 @@ python3 $S/fetch.py --days 30 --out-dir data
 python3 $S/urls.py --snapshot snapshot.json --out urls.json
 python3 $S/checks.py snapshot.json                      # находки текстом
 python3 $S/dashboard.py --snapshot snapshot.json --reports data --urls urls.json \
-    --target-cpa 500 --account "Клиент" --period "20.07 — 18.08.2026" --out audit.html
+    --target-cpa 500 --account "Клиент" --period "20.07 — 18.08.2026" \
+    --brands "бренд,брэнд,brand" --out audit.html
 ```
 
 Порядок важен только в одном месте: `urls.py` и `dashboard.py` читают `snapshot.json`,

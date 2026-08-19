@@ -8,7 +8,7 @@
 Все входы кроме --snapshot необязательны: чего нет, тот блок не рисуется.
 Логика находок — та же, что в checks.py; принципы вёрстки — dashboard.md.
 """
-import argparse, csv, html, json, os, sys, importlib.util
+import argparse, csv, html, json, os, re, sys, importlib.util
 from collections import defaultdict
 from datetime import date
 
@@ -157,16 +157,23 @@ def build(a):
     places = tsv(a.placements, "Placement")
     urls = json.load(open(a.urls, encoding="utf-8")) if a.urls else None
 
-    segs, queries = [], []
+    segs, queries, traffic = [], [], []
     if a.reports:
         for fname, key, title in SEGMENTS:
             path = os.path.join(a.reports, fname + ".tsv")
             if os.path.exists(path):
                 segs.append((title, seg_rows(tsv(path, key), key,
-                                             limit=10 if fname == "geo" else None)))
+                                             limit=10 if fname == "geo" else None,
+                                             labels=MATCH_LABELS if fname == "matchtype" else None)))
         qpath = os.path.join(a.reports, "queries.tsv")
         if os.path.exists(qpath):
             queries = tsv(qpath, "Query")
+        brands = [b.strip().lower() for b in a.brands.split(",") if b.strip()]
+        if queries and brands:
+            segs.insert(0, ("Упоминание бренда в запросе", brand_rows(queries, brands)))
+        tpath = os.path.join(a.reports, "traffic.tsv")
+        if os.path.exists(tpath):
+            traffic = tsv(tpath, "CampaignName")
 
     # Мастер кампаний в campaigns.get не отдаётся: в статистике кампания есть, в слепке её нет.
     # Молча потерять её нельзя — это может быть заметная доля расхода без единой проверенной настройки.
@@ -217,7 +224,7 @@ def build(a):
                share=inv_cost / total["cost"] * 100 if total["cost"] else 0) if invisible else None
 
     return render(a, live, camps, findings, score, grade, total, cpa, target,
-                  camp_rows, day_pts, net, pl, inv, urls, segs, queries)
+                  camp_rows, day_pts, net, pl, inv, urls, segs, queries, traffic)
 
 
 def collect_findings(snap):
@@ -375,6 +382,7 @@ tbody tr:last-child td{border-bottom:0}
 td.r,th.r{text-align:right}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
 .segs{display:grid;grid-template-columns:1fr;gap:22px}
+.seg .hint{margin:8px 0 0;font-size:12px;color:var(--muted)}
 .seg h4{margin:0 0 6px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .seg table{min-width:0;width:100%}
 .seg .tbl{overflow:visible}
@@ -400,7 +408,7 @@ footer{color:var(--muted);font-size:12px;margin-top:22px;text-align:center}
 
 
 def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows,
-           day_pts, net, pl, inv=None, urls=None, segs=None, queries=None):
+           day_pts, net, pl, inv=None, urls=None, segs=None, queries=None, traffic=None):
     crit = [f for f in findings if f["level"] == checks.CRIT]
     warn = [f for f in findings if f["level"] == checks.WARN]
     info = [f for f in findings if f["level"] == checks.INFO]
@@ -462,8 +470,8 @@ def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows
                   f'данные прямо сейчас, P1 — ограничивает результат, P2 — даст прирост, но не горит.</p>'
                   f'<div class="actions">{"".join(acts)}</div></section>')
     blocks.append(section_campaigns(camp_rows, day_pts, net_parts, target, inv))
-    if segs:
-        blocks.append(section_segments(segs, target if target_given[0] else None))
+    if segs or traffic:
+        blocks.append(section_segments(segs or [], target if target_given[0] else None, traffic))
     if queries:
         blocks.append(section_queries(queries, target if target_given[0] else None))
     if pl:
@@ -553,24 +561,34 @@ LABELS = {
     "RETARGETING": "Ретаргетинг и аудитории", "DYNAMIC_TEXT_AD": "Динамические объявления",
     "SMART_BANNER": "Смарт-баннеры", "USER_PROFILE": "Профиль пользователя",
     "OFFER_RETARGETING": "Товарный ретаргетинг", "WEBPAGE": "Условия на страницы сайта",
+    "KEYWORD_MT": "Точное совпадение с фразой", "SYNONYM": "Синоним фразы",
+    "NONE": "Автотаргетинг (без фразы)",
 }
+
+MATCH_LABELS = {"KEYWORD": "Совпадение с фразой", "SYNONYM": "Синоним фразы",
+                "NONE": "Без фразы (автотаргетинг)"}
 
 SEGMENTS = [("segment", "AdNetworkType", "Поиск и сети"),
             ("targeting", "CriterionType", "Тип таргетинга"),
+            ("matchtype", "MatchType", "Тип соответствия на Поиске"),
             ("device", "Device", "Устройства"),
             ("gender", "Gender", "Пол"), ("age", "Age", "Возраст"),
             ("geo", "LocationOfPresenceName", "Города")]
 
 
-def seg_rows(rows, key, limit=None):
-    """Строки среза с посчитанными CPA и долей расхода, отсортированные по расходу."""
-    out = []
+def seg_rows(rows, key, limit=None, labels=None):
+    """Строки среза с CPA и долей расхода. Агрегирует: отчёт может отдавать
+    несколько строк на одно значение среза (так делает отчёт по запросам)."""
+    labels = labels or LABELS
+    acc = defaultdict(lambda: dict(cost=0.0, clicks=0.0, conv=0.0))
     for r in rows:
-        cost, clicks = num(r.get("Cost")), num(r.get("Clicks"))
-        conv = num(r.get("Conversions"))
-        out.append(dict(name=LABELS.get((r.get(key) or "").strip(), (r.get(key) or "—").strip()),
-                        cost=cost, clicks=clicks, conv=conv,
-                        cpa=cost / conv if conv else 0))
+        raw = (r.get(key) or "—").strip()
+        d = acc[labels.get(raw, raw)]
+        d["cost"] += num(r.get("Cost"))
+        d["clicks"] += num(r.get("Clicks"))
+        d["conv"] += num(r.get("Conversions"))
+    out = [dict(name=k, cost=v["cost"], clicks=v["clicks"], conv=v["conv"],
+                cpa=v["cost"] / v["conv"] if v["conv"] else 0) for k, v in acc.items()]
     out.sort(key=lambda r: -r["cost"])
     total = sum(r["cost"] for r in out) or 1
     for r in out:
@@ -753,8 +771,10 @@ def section_urls(urls):
 
 
 def seg_table(rows, target):
+    total = sum(r["cost"] for r in rows) or 1
     body = ""
     for r in rows:
+        r.setdefault("share", r["cost"] / total * 100)
         cpa = money(r["cpa"]) if r["cpa"] else "—"
         cls = ""
         if target and r["cpa"]:
@@ -769,12 +789,63 @@ def seg_table(rows, target):
             f'<th class="r">CPA</th></tr></thead><tbody>{body}</tbody></table></div>')
 
 
-def section_segments(segs, target):
-    if not segs:
+def norm_txt(t):
+    return " " + re.sub(r"[^a-zа-я0-9 ]+", " ", t.lower().replace("ё", "е")) + " "
+
+
+def brand_rows(queries, brands):
+    """Деление запросов на брендовые и небрендовые по списку слов бренда."""
+    marks = [norm_txt(b).strip() for b in brands]
+    acc = {"Брендовые запросы": dict(cost=0.0, clicks=0.0, conv=0.0),
+           "Небрендовые запросы": dict(cost=0.0, clicks=0.0, conv=0.0)}
+    for r in queries:
+        q = norm_txt(r.get("Query") or "")
+        key = "Брендовые запросы" if any(m in q for m in marks) else "Небрендовые запросы"
+        acc[key]["cost"] += num(r.get("Cost"))
+        acc[key]["clicks"] += num(r.get("Clicks"))
+        acc[key]["conv"] += num(r.get("Conversions"))
+    return sorted((dict(name=k, cost=v["cost"], clicks=v["clicks"], conv=v["conv"],
+                        cpa=v["cost"] / v["conv"] if v["conv"] else 0)
+                   for k, v in acc.items()), key=lambda r: -r["cost"])
+
+
+def traffic_table(traffic):
+    """Средний объём трафика на Поиске — шкала Директа, а не проценты."""
+    rows = []
+    for r in traffic:
+        vol = num(r.get("AvgTrafficVolume"))
+        if vol:
+            rows.append(dict(name=(r.get("CampaignName") or "—").strip(), vol=vol,
+                             imps=num(r.get("Impressions")), clicks=num(r.get("Clicks")),
+                             cost=num(r.get("Cost"))))
+    if not rows:
+        return ""
+    rows.sort(key=lambda r: -r["cost"])
+    top = max(r["vol"] for r in rows) or 1
+    body = "".join(
+        f'<tr><td>{E(r["name"])}</td>'
+        f'<td class="r sh"><span class="mini"><i style="width:{r["vol"] / top * 100:.0f}%"></i>'
+        f'</span>{r["vol"]:.0f}</td>'
+        f'<td class="r">{n(r["imps"])}</td><td class="r">{n(r["clicks"])}</td>'
+        f'<td class="r">{money(r["cost"])}</td></tr>' for r in rows)
+    return (f'<div class="seg"><h4>Объём трафика на Поиске</h4>'
+            f'<div class="tbl"><table><thead><tr><th>Кампания</th>'
+            f'<th class="r">Средний объём</th><th class="r">Показы</th>'
+            f'<th class="r">Клики</th><th class="r">Расход</th></tr></thead>'
+            f'<tbody>{body}</tbody></table></div>'
+            f'<p class="hint">Объём трафика — шкала Директа: сколько кликов даёт место показа '
+            f'относительно самого верхнего (100). Низкий объём при заметном расходе значит, '
+            f'что кампания стоит в дешёвых блоках и недобирает охват.</p></div>')
+
+
+
+def section_segments(segs, target, traffic=None):
+    if not segs and not traffic:
         return ""
     cards = ""
     for title, rows in segs:
         cards += f'<div class="seg"><h4>{E(title)}</h4>{seg_table(rows, target)}</div>'
+    cards += traffic_table(traffic or [])
     return (f'<section id="segments"><h2><span class="num">03</span>Срезы эффективности</h2>'
             f'<p class="lede">Весь аккаунт целиком. CPA подсвечен относительно целевого: '
             f'красным — дороже полутора целевых, зелёным — дешевле цели. '
@@ -857,6 +928,9 @@ def main():
     ap.add_argument("--placements", help="TSV: отчёт по площадкам (только сети)")
     ap.add_argument("--urls", help="JSON: результат urls.py")
     ap.add_argument("--reports", help="каталог с TSV от fetch.py — заменяет отдельные флаги")
+    ap.add_argument("--brands", default="",
+                    help="слова бренда через запятую: «море квестов,морквест» — "
+                         "по ним запросы делятся на брендовые и небрендовые")
     ap.add_argument("--days", help="TSV: расход и конверсии по дням")
     ap.add_argument("--target-cpa", type=float)
     ap.add_argument("--account", default="")

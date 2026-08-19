@@ -123,6 +123,17 @@ curl -s -X POST https://api.direct.yandex.com/json/v5/reports \
 - Другие полезные срезы того же отчёта: `ExternalNetworkName` (внешние сети),
   `MobilePlatform`, `Device`, `TargetingLocationName`, `LocationOfPresenceName`, `Age`, `Gender`,
   `CriterionType`.
+- **`MatchType`** (только в `SEARCH_QUERY_PERFORMANCE_REPORT`) показывает, как запрос попал
+  в показ: `KEYWORD` — совпадение с фразой, `SYNONYM` — синоним фразы, `NONE` — без фразы,
+  то есть автотаргетинг. Отчёт отдаёт строку на каждый запрос, поэтому суммировать по типу
+  нужно на своей стороне.
+- **`AvgTrafficVolume`** — средний объём трафика на Поиске по шкале Директа (100 — самое верхнее
+  место). Это метрика, а не срез: запрашивается вместе с `CampaignName` и фильтром
+  `AdNetworkType = SEARCH`.
+- **Среза «упоминание бренда» в API нет.** Проверены `BrandMention`, `BrandMentionType`,
+  `BrandName`, `BrandType`, `QueryBrand`, `MentionBrand`, `BrandCategory` и другие — все дают
+  «неверное значение перечисления». Деление на бренд и небренд считается самостоятельно
+  по списку слов бренда (`dashboard.py --brands`), список берётся у клиента.
 - **`CriterionType` разделяет типы таргетинга**: `KEYWORD`, `AUTOTARGETING`, `RETARGETING`
   и далее по типам кампаний (`DYNAMIC_TEXT_AD`, `SMART_BANNER`, `WEBPAGE`, `USER_PROFILE`,
   `OFFER_RETARGETING`). Это единственный дешёвый способ увидеть, сколько денег забирает
