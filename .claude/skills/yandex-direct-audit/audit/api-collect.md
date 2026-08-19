@@ -151,3 +151,17 @@ curl -s -X POST https://api.direct.yandex.com/json/v5/reports \
   до тех пор, пока `LimitedBy` возвращается, подставляя его в `Page.Offset`.
 - Слепок аккаунта на ~30 кампаний / 300 групп / 3800 ключей / 500 объявлений снимается
   примерно за 30 секунд.
+
+## Где на самом деле лежат значения
+
+- **Цель конверсионной стратегии** — внутри блока стратегии, а не в `PriorityGoals`:
+  `BiddingStrategy.Search.PayForConversion.GoalId` (аналогично `AverageCpa`, `AverageCrr`,
+  `AverageRoi`). `PriorityGoals` заполняется только при нескольких целях с ценностями.
+- **Деньги в campaigns.get всегда в микроединицах**, заголовок `returnMoneyInMicros: false`
+  на этот сервис не действует (проверено: ответ идентичен с заголовком и без него).
+  `Cpa: 1000000000` = 1 000 ₽, `WeeklySpendLimit: 30000000000` = 30 000 ₽. Делить на 1 000 000.
+  В `reports` тот же заголовок работает как обещано.
+- **Минус-слова** живут на трёх уровнях: `NegativeKeywords` кампании, `NegativeKeywords` группы,
+  наборы `NegativeKeywordSharedSetIds` (у кампании и у группы). Проверять все три.
+- **Тип объекта кампании** зависит от типа: `TextCampaign`, `UnifiedCampaign`, `SmartCampaign`
+  и так далее. Универсальный доступ — взять единственный ключ, оканчивающийся на `Campaign`.

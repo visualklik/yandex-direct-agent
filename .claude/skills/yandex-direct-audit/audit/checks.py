@@ -32,9 +32,42 @@ def strategy_types(camp):
     return {p: (bs.get(p) or {}).get("BiddingStrategyType") for p in ("Search", "Network")}
 
 
+STRATEGY_PARAM_KEYS = ("PayForConversion", "AverageCpa", "AverageCrr", "AverageRoi",
+                      "WbMaximumConversionRate", "PayForConversionCrr", "WbMaximumAppInstalls",
+                      "AverageCpi", "WeeklyClickPackage", "AverageCpc", "WbMaximumClicks")
+
+
+def strategy_params(camp):
+    """Параметры стратегий Поиска и сетей: {Search: {...}, Network: {...}}."""
+    bs = body(camp).get("BiddingStrategy") or {}
+    out = {}
+    for place in ("Search", "Network"):
+        blk = bs.get(place) or {}
+        for k in STRATEGY_PARAM_KEYS:
+            if isinstance(blk.get(k), dict):
+                out[place] = blk[k]
+                break
+    return out
+
+
+def campaign_goals(camp):
+    """Цели кампании: из PriorityGoals и из самой стратегии.
+
+    Ловушка: при одной цели она лежит в стратегии (`PayForConversion.GoalId`),
+    а `PriorityGoals` остаётся null. Судить по одному PriorityGoals — ложная тревога.
+    """
+    goals = {g["GoalId"] for g in ((body(camp).get("PriorityGoals") or {}).get("Items") or [])}
+    for params in strategy_params(camp).values():
+        if params.get("GoalId"):
+            goals.add(params["GoalId"])
+    return goals
+
+
 def norm_key(k):
-    k = re.sub(r"[!+\"\[\]]", "", k.lower())
-    return " ".join(sorted(w for w in re.split(r"\W+", k) if w and not w.startswith("-")))
+    """Ключ без операторов, минус-слов и порядка слов — для поиска дублей."""
+    k = re.sub(r"-\S+", "", k.lower())          # минус-слова принадлежат фразе, не совпадению
+    k = re.sub(r"[!+\"\[\]]", "", k)
+    return " ".join(sorted(w for w in re.split(r"\W+", k) if w))
 
 
 def main():
@@ -57,22 +90,40 @@ def main():
         if h and "utm_" not in h and "openstat" not in h:
             camps_without_utm.add(a["CampaignId"])
 
+    negatives_in_groups = defaultdict(int)
+    for g in groups:
+        negatives_in_groups[g["CampaignId"]] += len(
+            (g.get("NegativeKeywords") or {}).get("Items") or [])
+        negatives_in_groups[g["CampaignId"]] += len(
+            (g.get("NegativeKeywordSharedSetIds") or {}).get("Items") or [])
+
     for c in live.values():
         n, b = c["Name"], body(c)
         st = strategy_types(c)
         conv_strategy = any(t in CONV_STRATEGIES for t in st.values() if t)
         if conv_strategy and not b.get("CounterIds"):
             add(CRIT, "нет счётчика Метрики при конверсионной стратегии", n)
-        if conv_strategy and not b.get("PriorityGoals"):
-            add(CRIT, "не заданы ключевые цели при конверсионной стратегии", n)
+        if conv_strategy and not campaign_goals(c):
+            add(CRIT, "не заданы цели при конверсионной стратегии", n)
+        for place, params in strategy_params(c).items():
+            week, cpa_t = params.get("WeeklySpendLimit"), params.get("Cpa")
+            if week and cpa_t and week / cpa_t < 10:
+                add(WARN, "недельный бюджет не даёт 10 конверсий — стратегия не обучится",
+                    f"{n}: {week/1e6:,.0f} ₽/нед при цели {cpa_t/1e6:,.0f} ₽ "
+                    f"= {week/cpa_t:.1f} конверсий".replace(",", " "))
         if setting(c, "ENABLE_SITE_MONITORING") == "NO":
             add(WARN, "выключен мониторинг сайта", n)
         if setting(c, "ADD_METRICA_TAG") == "NO" and c["Id"] in camps_without_utm:
             add(WARN, "разметка выключена, а в ссылках нет UTM — источник не отследить", n)
         if setting(c, "ENABLE_AREA_OF_INTEREST_TARGETING") == "YES":
             add(INFO, "включён расширенный геотаргетинг — проверить по отчёту регионов", n)
-        if not (c.get("NegativeKeywords") or {}).get("Items"):
-            add(WARN, "нет минус-слов на уровне кампании", n)
+        neg_c = len((c.get("NegativeKeywords") or {}).get("Items") or [])
+        neg_g = negatives_in_groups.get(c["Id"], 0)
+        sets = len((b.get("NegativeKeywordSharedSetIds") or {}).get("Items") or [])
+        if neg_c + neg_g + sets == 0:
+            search_serves = st["Search"] not in (None, "SERVING_OFF")
+            add(WARN if search_serves else INFO,
+                "минус-слов нет нигде: ни в кампании, ни в группах, ни в наборах", n)
         if len((c.get("ExcludedSites") or {}).get("Items") or []) > 300:
             add(INFO, f"запрещённых площадок {len(c['ExcludedSites']['Items'])} — проверить эффект", n)
         if st["Search"] not in (None, "SERVING_OFF") and st["Network"] not in (None, "SERVING_OFF",
@@ -89,12 +140,19 @@ def main():
         add(INFO, f"групп с единственным активным объявлением: {len(single)}",
             ", ".join(gname.get(g, str(g)) for g in single[:5]) + ("…" if len(single) > 5 else ""))
 
+    # клоны считаем только внутри одной посадочной: объявления с разными URL
+    # схлопывать нельзя — половина заголовков поведёт не туда
     clones = []
     for g, v in by_group_ads.items():
-        r = [a for a in v if a.get("Type") == "RESPONSIVE_AD"]
-        thin = [a for a in r if len((a.get("ResponsiveAd") or {}).get("Titles") or []) <= 1]
-        if len(thin) >= 2:
-            clones.append((g, len(thin)))
+        buckets = defaultdict(list)
+        for a in v:
+            if a.get("Type") != "RESPONSIVE_AD":
+                continue
+            if len((a.get("ResponsiveAd") or {}).get("Titles") or []) > 1:
+                continue
+            buckets[((a.get("ResponsiveAd") or {}).get("Href") or "").split("?")[0]].append(a)
+        if any(len(b) >= 2 for b in buckets.values()):
+            clones.append((g, max(len(b) for b in buckets.values())))
     if clones:
         add(WARN, f"групп с объявлениями-клонами (один заголовок): {len(clones)}",
             "кандидаты на схлопывание в комбинаторное, см. updates/api-responsive-ads.md")
@@ -110,20 +168,28 @@ def main():
         if cnt / sum(hrefs.values()) > 0.5:
             add(WARN, f"{cnt} из {sum(hrefs.values())} объявлений ведут на одну страницу", top)
 
-    dupes = defaultdict(set)
+    intra, cross = defaultdict(set), defaultdict(set)
     for k in keys:
         if k.get("State") == "ON" and k["CampaignId"] in live:
-            dupes[norm_key(k["Keyword"])].add(k["AdGroupId"])
-    d = {k: v for k, v in dupes.items() if len(v) > 1}
-    if d:
-        add(WARN, f"дублей ключевых фраз между группами: {len(d)}",
-            "; ".join(list(d)[:3]) + ("…" if len(d) > 3 else ""))
+            intra[(k["CampaignId"], norm_key(k["Keyword"]))].add(k["AdGroupId"])
+            cross[norm_key(k["Keyword"])].add(k["CampaignId"])
+    di = {k: v for k, v in intra.items() if len(v) > 1}
+    dc = {k: v for k, v in cross.items() if len(v) > 1}
+    if di:
+        sample = "; ".join(k[1] for k in list(di)[:3])
+        add(WARN, f"дублей фраз внутри кампаний (между группами): {len(di)}",
+            sample + ("…" if len(di) > 3 else "") + " — группы конкурируют друг с другом")
+    if dc:
+        add(INFO, f"фраз, встречающихся в нескольких кампаниях: {len(dc)}",
+            "проверить, что это разные площадки или разные регионы, а не конкуренция")
 
-    thin_ads = [a for a in ads if a.get("State") == "ON" and a["CampaignId"] in live
+    net_camps = {i for i, c in live.items()
+                 if strategy_types(c)["Network"] not in (None, "SERVING_OFF")}
+    thin_ads = [a for a in ads if a.get("State") == "ON" and a["CampaignId"] in net_camps
                 and len(((a.get("ResponsiveAd") or {}).get("AdImages") or {}).get("Items") or []) == 1]
     if thin_ads:
-        add(INFO, f"объявлений с единственным изображением: {len(thin_ads)}",
-            "в сетях можно до 5")
+        add(INFO, f"объявлений в сетях с единственным изображением: {len(thin_ads)}",
+            "в комбинаторном можно до 5 — больше вариантов для подбора")
 
     rejected = [a for a in ads if a.get("Status") == "REJECTED" and a["CampaignId"] in live]
     if rejected:
