@@ -140,6 +140,13 @@ def donut(parts, size=132):
 # ─────────────────────────── сборка ───────────────────────────
 
 def build(a):
+    if a.reports:                       # каталог от fetch.py: имена файлов фиксированные
+        for attr, fname in (("campaigns", "campaigns"), ("days", "days"),
+                            ("placements", "placements")):
+            path = os.path.join(a.reports, fname + ".tsv")
+            if not getattr(a, attr) and os.path.exists(path):
+                setattr(a, attr, path)
+
     snap = json.load(open(a.snapshot, encoding="utf-8"))
     camps = {c["Id"]: c for c in snap["campaigns"]}
     live = {i: c for i, c in camps.items() if c.get("State") == "ON"}
@@ -149,6 +156,17 @@ def build(a):
     days = tsv(a.days, "Date")
     places = tsv(a.placements, "Placement")
     urls = json.load(open(a.urls, encoding="utf-8")) if a.urls else None
+
+    segs, queries = [], []
+    if a.reports:
+        for fname, key, title in SEGMENTS:
+            path = os.path.join(a.reports, fname + ".tsv")
+            if os.path.exists(path):
+                segs.append((title, seg_rows(tsv(path, key), key,
+                                             limit=10 if fname == "geo" else None)))
+        qpath = os.path.join(a.reports, "queries.tsv")
+        if os.path.exists(qpath):
+            queries = tsv(qpath, "Query")
 
     # Мастер кампаний в campaigns.get не отдаётся: в статистике кампания есть, в слепке её нет.
     # Молча потерять её нельзя — это может быть заметная доля расхода без единой проверенной настройки.
@@ -199,7 +217,7 @@ def build(a):
                share=inv_cost / total["cost"] * 100 if total["cost"] else 0) if invisible else None
 
     return render(a, live, camps, findings, score, grade, total, cpa, target,
-                  camp_rows, day_pts, net, pl, inv, urls)
+                  camp_rows, day_pts, net, pl, inv, urls, segs, queries)
 
 
 def collect_findings(snap):
@@ -351,6 +369,14 @@ td{padding:9px 12px;border-bottom:1px solid var(--line)}
 tbody tr:last-child td{border-bottom:0}
 td.r,th.r{text-align:right}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.segs{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px}
+.seg h4{margin:0 0 6px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.seg table{min-width:0}
+td.bad{color:var(--p0);font-weight:600} td.good{color:var(--ok)}
+td.sh{white-space:nowrap}
+.mini{display:inline-block;width:38px;height:6px;border-radius:3px;background:var(--line);
+ margin-right:6px;vertical-align:middle;overflow:hidden}
+.mini i{display:block;height:100%;background:var(--accent)}
 .strat{font-size:13px;line-height:1.35}
 .strat.off{color:var(--muted)}
 .strat-meta{display:block;font-size:11px;color:var(--muted);margin-top:2px}
@@ -367,7 +393,7 @@ footer{color:var(--muted);font-size:12px;margin-top:22px;text-align:center}
 
 
 def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows,
-           day_pts, net, pl, inv=None, urls=None):
+           day_pts, net, pl, inv=None, urls=None, segs=None, queries=None):
     crit = [f for f in findings if f["level"] == checks.CRIT]
     warn = [f for f in findings if f["level"] == checks.WARN]
     info = [f for f in findings if f["level"] == checks.INFO]
@@ -429,6 +455,10 @@ def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows
                   f'данные прямо сейчас, P1 — ограничивает результат, P2 — даст прирост, но не горит.</p>'
                   f'<div class="actions">{"".join(acts)}</div></section>')
     blocks.append(section_campaigns(camp_rows, day_pts, net_parts, target, inv))
+    if segs:
+        blocks.append(section_segments(segs, target if target_given[0] else None))
+    if queries:
+        blocks.append(section_queries(queries, target if target_given[0] else None))
     if pl:
         blocks.append(section_places(pl))
     if urls:
@@ -436,6 +466,8 @@ def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows
     blocks.append(section_settings(live, camps))
 
     toc = ('<nav class="toc"><a href="#plan">План правок</a><a href="#camps">Кампании</a>'
+           + ('<a href="#segments">Срезы</a>' if segs else "")
+           + ('<a href="#queries">Запросы</a>' if queries else "")
            + ('<a href="#places">Площадки РСЯ</a>' if pl else "")
            + ('<a href="#urls">Посадочные</a>' if urls else "")
            + '<a href="#settings">Настройки</a></nav>')
@@ -491,6 +523,42 @@ def section_verdict(a, score, grade, lines, total, cpa, target, live_n):
             f'<div><h3>Аккаунт {E(grade)}</h3><ul>'
             + "".join(f"<li>{l}</li>" for l in lines)
             + f'</ul></div></div><div class="kpis">{kh}</div></section>')
+
+
+LABELS = {
+    "SEARCH": "Поиск", "AD_NETWORK": "Сети (РСЯ)",
+    "DESKTOP": "Десктоп", "MOBILE": "Смартфоны", "TABLET": "Планшеты", "SMART_TV": "Smart TV",
+    "GENDER_MALE": "Мужчины", "GENDER_FEMALE": "Женщины", "GENDER_UNKNOWN": "Пол неизвестен",
+    "AGE_0_17": "до 17", "AGE_18_24": "18–24", "AGE_25_34": "25–34", "AGE_35_44": "35–44",
+    "AGE_45_54": "45–54", "AGE_55": "55+", "UNKNOWN": "не определено",
+}
+
+SEGMENTS = [("segment", "AdNetworkType", "Поиск и сети"), ("device", "Device", "Устройства"),
+            ("gender", "Gender", "Пол"), ("age", "Age", "Возраст"),
+            ("geo", "LocationOfPresenceName", "Города")]
+
+
+def seg_rows(rows, key, limit=None):
+    """Строки среза с посчитанными CPA и долей расхода, отсортированные по расходу."""
+    out = []
+    for r in rows:
+        cost, clicks = num(r.get("Cost")), num(r.get("Clicks"))
+        conv = num(r.get("Conversions"))
+        out.append(dict(name=LABELS.get((r.get(key) or "").strip(), (r.get(key) or "—").strip()),
+                        cost=cost, clicks=clicks, conv=conv,
+                        cpa=cost / conv if conv else 0))
+    out.sort(key=lambda r: -r["cost"])
+    total = sum(r["cost"] for r in out) or 1
+    for r in out:
+        r["share"] = r["cost"] / total * 100
+    if limit and len(out) > limit:
+        tail = out[limit:]
+        out = out[:limit] + [dict(name=f"остальные ({len(tail)})",
+                                  cost=sum(r["cost"] for r in tail),
+                                  clicks=sum(r["clicks"] for r in tail),
+                                  conv=sum(r["conv"] for r in tail), cpa=0,
+                                  share=sum(r["share"] for r in tail))]
+    return out
 
 
 STRATEGY_NAMES = {
@@ -601,7 +669,7 @@ def section_places(pl):
         f'<td class="r">{money(r["cost"])}</td><td class="r">{n(r["conv"])}</td>'
         f'<td class="r">{r["bounce"]:.0f}%</td></tr>' for r in tbl_rows)
     cap = "Кандидаты на запрет" if cand else "Топ площадок по расходу"
-    return (f'<section id="places"><h2><span class="num">03</span>Площадки РСЯ</h2>'
+    return (f'<section id="places"><h2><span class="num">05</span>Площадки РСЯ</h2>'
             f'<p class="lede">Кривая показывает концентрацию расхода: по оси X — площадки '
             f'от самых дорогих к дешёвым, по Y — накопленная доля денег. Чем круче начало, '
             f'тем меньше площадок реально стоит разбирать.</p>'
@@ -648,7 +716,7 @@ def section_urls(urls):
              f'<div class="card"><h4>С проблемой</h4>'
              f'<p style="font-size:22px;color:var(--ink)">{len(bad)}</p>'
              f'<p>из них в показах: {len(live_bad)}</p></div></div>')
-    return (f'<section id="urls"><h2><span class="num">04</span>Посадочные страницы</h2>'
+    return (f'<section id="urls"><h2><span class="num">06</span>Посадочные страницы</h2>'
             f'<p class="lede">Каждый уникальный адрес из объявлений и быстрых ссылок '
             f'запрошен один раз: код ответа, цепочка редиректов, подмена страницы. '
             f'Макросы вида {{campaign_id}} вырезаны, UTM отброшены — проверяется сама страница.</p>'
@@ -658,6 +726,68 @@ def section_urls(urls):
             f'<th>Диагноз</th><th>Детали</th><th class="r">Объектов</th>'
             f'<th class="r">В показах</th></tr></thead><tbody>{rows}</tbody></table></div>'
             f'</details></section>')
+
+
+def seg_table(rows, target):
+    body = ""
+    for r in rows:
+        cpa = money(r["cpa"]) if r["cpa"] else "—"
+        cls = ""
+        if target and r["cpa"]:
+            cls = " bad" if r["cpa"] > target * 1.5 else (" good" if r["cpa"] < target else "")
+        body += (f'<tr><td>{E(r["name"])}</td><td class="r">{n(r["clicks"])}</td>'
+                 f'<td class="r">{money(r["cost"])}</td>'
+                 f'<td class="r sh"><span class="mini"><i style="width:{min(r["share"],100):.0f}%">'
+                 f'</i></span>{r["share"]:.0f}%</td>'
+                 f'<td class="r">{n(r["conv"])}</td><td class="r{cls}">{cpa}</td></tr>')
+    return (f'<div class="tbl"><table><thead><tr><th>Срез</th><th class="r">Клики</th>'
+            f'<th class="r">Расход</th><th class="r">Доля</th><th class="r">Конв.</th>'
+            f'<th class="r">CPA</th></tr></thead><tbody>{body}</tbody></table></div>')
+
+
+def section_segments(segs, target):
+    if not segs:
+        return ""
+    cards = ""
+    for title, rows in segs:
+        cards += f'<div class="seg"><h4>{E(title)}</h4>{seg_table(rows, target)}</div>'
+    return (f'<section id="segments"><h2><span class="num">03</span>Срезы эффективности</h2>'
+            f'<p class="lede">Весь аккаунт целиком. CPA подсвечен относительно целевого: '
+            f'красным — дороже полутора целевых, зелёным — дешевле цели. '
+            f'Срез с малым числом конверсий читать как «данных мало», а не как приговор.</p>'
+            f'<div class="segs">{cards}</div></section>')
+
+
+def section_queries(rows, target, top=30):
+    if not rows:
+        return ""
+    data = []
+    for r in rows:
+        cost, conv = num(r.get("Cost")), num(r.get("Conversions"))
+        data.append(dict(q=(r.get("Query") or "").strip(), camp=r.get("CampaignName", ""),
+                         clicks=num(r.get("Clicks")), cost=cost, conv=conv,
+                         cpa=cost / conv if conv else 0))
+    data.sort(key=lambda r: -r["cost"])
+    total = sum(r["cost"] for r in data) or 1
+    zero = [r for r in data if r["conv"] == 0]
+    top_rows = data[:top]
+    body = "".join(
+        f'<tr><td>{E(r["q"])}</td><td class="mono">{E(r["camp"])}</td>'
+        f'<td class="r">{n(r["clicks"])}</td><td class="r">{money(r["cost"])}</td>'
+        f'<td class="r">{n(r["conv"])}</td>'
+        f'<td class="r{" bad" if target and r["cpa"] > target*1.5 else ""}">'
+        f'{money(r["cpa"]) if r["cpa"] else "—"}</td></tr>' for r in top_rows)
+    note = (f'<p class="note warn">Запросов без конверсий: {n(len(zero))} '
+            f'из {n(len(data))}, на них {money(sum(r["cost"] for r in zero))} '
+            f'({sum(r["cost"] for r in zero)/total*100:.0f}% расхода на поиске). '
+            f'Минусовать стоит не весь список, а строки, набравшие достаточно кликов — '
+            f'порог тот же, что для площадок: 3 / CR.</p>')
+    return (f'<section id="queries"><h2><span class="num">04</span>Поисковые запросы</h2>'
+            f'<p class="lede">Топ-{len(top_rows)} по расходу за период. Это то, за что реально '
+            f'заплачено, а не то, что задумано в семантике.</p>{note}'
+            f'<div class="tbl"><table><thead><tr><th>Запрос</th><th>Кампания</th>'
+            f'<th class="r">Клики</th><th class="r">Расход</th><th class="r">Конв.</th>'
+            f'<th class="r">CPA</th></tr></thead><tbody>{body}</tbody></table></div></section>')
 
 
 def section_settings(live, camps):
@@ -684,7 +814,7 @@ def section_settings(live, camps):
                   for _, ok, v in fl)
         + f'<td class="r">{neg}</td><td class="r">{exc}</td></tr>'
         for name, s, nw, cnt, goals, fl, neg, exc in rows)
-    return (f'<section id="settings"><h2><span class="num">05</span>Настройки активных кампаний</h2>'
+    return (f'<section id="settings"><h2><span class="num">07</span>Настройки активных кампаний</h2>'
             f'<p class="lede">Слепок значений, а не пересказ. Жёлтым помечено то, что отличается '
             f'от рекомендованного для этого типа кампании.</p>'
             f'<div class="tbl"><table><thead><tr><th>Кампания</th><th>Стратегия на Поиске</th>'
@@ -702,6 +832,7 @@ def main():
     ap.add_argument("--campaigns", help="TSV: CAMPAIGN_PERFORMANCE_REPORT")
     ap.add_argument("--placements", help="TSV: отчёт по площадкам (только сети)")
     ap.add_argument("--urls", help="JSON: результат urls.py")
+    ap.add_argument("--reports", help="каталог с TSV от fetch.py — заменяет отдельные флаги")
     ap.add_argument("--days", help="TSV: расход и конверсии по дням")
     ap.add_argument("--target-cpa", type=float)
     ap.add_argument("--account", default="")
