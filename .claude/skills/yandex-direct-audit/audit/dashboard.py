@@ -148,6 +148,7 @@ def build(a):
     perf = tsv(a.campaigns, "CampaignId")
     days = tsv(a.days, "Date")
     places = tsv(a.placements, "Placement")
+    urls = json.load(open(a.urls, encoding="utf-8")) if a.urls else None
 
     # Мастер кампаний в campaigns.get не отдаётся: в статистике кампания есть, в слепке её нет.
     # Молча потерять её нельзя — это может быть заметная доля расхода без единой проверенной настройки.
@@ -198,7 +199,7 @@ def build(a):
                share=inv_cost / total["cost"] * 100 if total["cost"] else 0) if invisible else None
 
     return render(a, live, camps, findings, score, grade, total, cpa, target,
-                  camp_rows, day_pts, net, pl, inv)
+                  camp_rows, day_pts, net, pl, inv, urls)
 
 
 def collect_findings(snap):
@@ -366,7 +367,7 @@ footer{color:var(--muted);font-size:12px;margin-top:22px;text-align:center}
 
 
 def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows,
-           day_pts, net, pl, inv=None):
+           day_pts, net, pl, inv=None, urls=None):
     crit = [f for f in findings if f["level"] == checks.CRIT]
     warn = [f for f in findings if f["level"] == checks.WARN]
     info = [f for f in findings if f["level"] == checks.INFO]
@@ -387,15 +388,32 @@ def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows
                     + f", {len(warn)} " + plural(len(warn), "важная", "важных", "важных")
                     + f", {len(info)} на улучшение")
 
-    acts = []
+    url_acts = []
+    if urls:
+        bad = [r for r in urls["items"] if r["problem"]]
+        live_bad = [r for r in bad if r["active_count"]]
+        if live_bad:
+            url_acts.append((P0, f"битые посадочные в работающих объектах: {len(live_bad)}",
+                             "; ".join(r["url"] for r in live_bad[:3]),
+                             "клик оплачен, пользователь на ошибке"))
+        elif bad:
+            url_acts.append((P2, f"битые ссылки в остановленных объектах: {len(bad)}",
+                             "; ".join(r["url"] for r in bad[:3]),
+                             "починить до перезапуска"))
+
+    items = list(url_acts)
     for f in crit + warn + info:
-        p = LEVEL_TO_P[f["level"]]
         hint = effect_hint(f)
         if hint and hint.lower() in f["detail"].lower():
             hint = ""
+        items.append((LEVEL_TO_P[f["level"]], f["what"], f["detail"], hint))
+    items.sort(key=lambda x: (P0, P1, P2).index(x[0]))
+
+    acts = []
+    for p, what, detail, hint in items:
         acts.append(f'<div class="act {p.lower()}"><span class="tag {p.lower()}">{p}</span>'
-                    f'<div><div class="what">{E(f["what"])}</div>'
-                    f'<div class="why">{E(f["detail"])}</div></div>'
+                    f'<div><div class="what">{E(what)}</div>'
+                    f'<div class="why">{E(detail)}</div></div>'
                     f'<div class="eff">{E(hint)}</div></div>')
 
     net_parts = []
@@ -413,10 +431,13 @@ def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows
     blocks.append(section_campaigns(camp_rows, day_pts, net_parts, target, inv))
     if pl:
         blocks.append(section_places(pl))
+    if urls:
+        blocks.append(section_urls(urls))
     blocks.append(section_settings(live, camps))
 
     toc = ('<nav class="toc"><a href="#plan">План правок</a><a href="#camps">Кампании</a>'
            + ('<a href="#places">Площадки РСЯ</a>' if pl else "")
+           + ('<a href="#urls">Посадочные</a>' if urls else "")
            + '<a href="#settings">Настройки</a></nav>')
 
     title = f"Аудит аккаунта — {a.account}" if a.account else "Аудит рекламного аккаунта"
@@ -596,6 +617,49 @@ def section_places(pl):
             f'<tbody>{tbl}</tbody></table></div></details></section>')
 
 
+def section_urls(urls):
+    items = urls["items"]
+    bad = [r for r in items if r["problem"]]
+    live_bad = [r for r in bad if r["active_count"]]
+    ok = len(items) - len(bad)
+    if not bad:
+        note = ('<p class="note">Все проверенные адреса отвечают 200 без подмены страницы. '
+                'Проверка разовая: сайт мог измениться после неё — повторять при каждом аудите '
+                'и после правок на сайте.</p>')
+    elif live_bad:
+        note = (f'<p class="note crit">Битых адресов в работающих объектах: {len(live_bad)}. '
+                f'Клики по ним оплачиваются, а пользователь попадает на ошибку — '
+                f'чинить в первую очередь.</p>')
+    else:
+        note = (f'<p class="note warn">Проблемных адресов: {len(bad)}, но все они только '
+                f'в остановленных объектах. На расход сейчас не влияют, починить до перезапуска.</p>')
+    rows = "".join(
+        f'<tr><td class="mono">{E(r["url"])}</td>'
+        f'<td class="r">{r["status"] or "—"}</td>'
+        f'<td>{E(r["problem"] or "норма")}</td>'
+        f'<td class="mono">{E(r["detail"])}</td>'
+        f'<td class="r">{r["used_count"]}</td>'
+        f'<td class="r">{r["active_count"]}</td></tr>'
+        for r in sorted(items, key=lambda r: (r["problem"] is None, -r["active_count"])))
+    cards = (f'<div class="grid"><div class="card"><h4>Проверено адресов</h4>'
+             f'<p style="font-size:22px;color:var(--ink)">{len(items)}</p></div>'
+             f'<div class="card"><h4>Отвечают нормально</h4>'
+             f'<p style="font-size:22px;color:var(--ink)">{ok}</p></div>'
+             f'<div class="card"><h4>С проблемой</h4>'
+             f'<p style="font-size:22px;color:var(--ink)">{len(bad)}</p>'
+             f'<p>из них в показах: {len(live_bad)}</p></div></div>')
+    return (f'<section id="urls"><h2><span class="num">04</span>Посадочные страницы</h2>'
+            f'<p class="lede">Каждый уникальный адрес из объявлений и быстрых ссылок '
+            f'запрошен один раз: код ответа, цепочка редиректов, подмена страницы. '
+            f'Макросы вида {{campaign_id}} вырезаны, UTM отброшены — проверяется сама страница.</p>'
+            f'{cards}{note}'
+            f'<details{" open" if bad else ""}><summary>Все проверенные адреса ({len(items)})</summary>'
+            f'<div class="tbl"><table><thead><tr><th>Адрес</th><th class="r">Код</th>'
+            f'<th>Диагноз</th><th>Детали</th><th class="r">Объектов</th>'
+            f'<th class="r">В показах</th></tr></thead><tbody>{rows}</tbody></table></div>'
+            f'</details></section>')
+
+
 def section_settings(live, camps):
     cards = []
     rows = []
@@ -620,7 +684,7 @@ def section_settings(live, camps):
                   for _, ok, v in fl)
         + f'<td class="r">{neg}</td><td class="r">{exc}</td></tr>'
         for name, s, nw, cnt, goals, fl, neg, exc in rows)
-    return (f'<section id="settings"><h2><span class="num">04</span>Настройки активных кампаний</h2>'
+    return (f'<section id="settings"><h2><span class="num">05</span>Настройки активных кампаний</h2>'
             f'<p class="lede">Слепок значений, а не пересказ. Жёлтым помечено то, что отличается '
             f'от рекомендованного для этого типа кампании.</p>'
             f'<div class="tbl"><table><thead><tr><th>Кампания</th><th>Стратегия на Поиске</th>'
@@ -637,6 +701,7 @@ def main():
     ap.add_argument("--snapshot", required=True)
     ap.add_argument("--campaigns", help="TSV: CAMPAIGN_PERFORMANCE_REPORT")
     ap.add_argument("--placements", help="TSV: отчёт по площадкам (только сети)")
+    ap.add_argument("--urls", help="JSON: результат urls.py")
     ap.add_argument("--days", help="TSV: расход и конверсии по дням")
     ap.add_argument("--target-cpa", type=float)
     ap.add_argument("--account", default="")

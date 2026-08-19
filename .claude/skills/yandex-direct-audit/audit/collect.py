@@ -107,6 +107,16 @@ def main():
             "ResponsiveAdFieldNames": RESPONSIVE_FIELDS,
             "TextAdFieldNames": TEXTAD_FIELDS}, ver="v501")
 
+        sl_ids = sorted({(ad.get("ResponsiveAd") or ad.get("TextAd") or {}).get("SitelinkSetId")
+                         for ad in snap["ads"]} - {None})
+        if sl_ids:
+            print("быстрые ссылки…", file=sys.stderr)
+            sets = []
+            for i in range(0, len(sl_ids), 10):
+                sets += call("sitelinks", {"SelectionCriteria": {"Ids": sl_ids[i:i + 10]},
+                                           "FieldNames": ["Id", "Sitelinks"]})
+            snap["sitelinks"] = sets
+
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False, indent=1)
     print({k: len(v) for k, v in snap.items()}, file=sys.stderr)
