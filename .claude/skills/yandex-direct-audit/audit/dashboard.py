@@ -307,11 +307,16 @@ h2{margin:0 0 4px;font-size:17px;letter-spacing:-.01em}
 h2 .num{color:var(--muted);font-weight:400;margin-right:8px}
 .lede{color:var(--muted);font-size:13px;margin:0 0 16px;max-width:70ch}
 .verdict{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:center}
-.score{width:104px;height:104px;border-radius:50%;display:grid;place-items:center;
- background:conic-gradient(var(--accent) calc(var(--v)*1%), var(--line) 0);position:relative}
-.score::after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--surface)}
-.score b{position:relative;z-index:1;font-size:30px;letter-spacing:-.03em}
-.score small{position:relative;z-index:1;font-size:11px;color:var(--muted);display:block;text-align:center}
+.score{position:relative;width:120px;height:120px;flex:0 0 auto}
+.score svg{width:100%;height:100%;transform:rotate(-90deg)}
+.score .track{fill:none;stroke:var(--line);stroke-width:9}
+.score .arc{fill:none;stroke:var(--accent);stroke-width:9;stroke-linecap:round;
+ transition:stroke-dasharray .6s ease}
+.score .arc.warn{stroke:var(--p1)} .score .arc.crit{stroke:var(--p0)}
+.score-txt{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+ justify-content:center;gap:1px;line-height:1}
+.score-txt b{font-size:34px;letter-spacing:-.03em;font-weight:700}
+.score-txt small{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}
 .verdict h3{margin:0 0 6px;font-size:19px;letter-spacing:-.015em}
 .verdict ul{margin:8px 0 0;padding-left:18px;font-size:14px;display:grid;gap:5px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
@@ -369,9 +374,11 @@ td{padding:9px 12px;border-bottom:1px solid var(--line)}
 tbody tr:last-child td{border-bottom:0}
 td.r,th.r{text-align:right}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
-.segs{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px}
+.segs{display:grid;grid-template-columns:1fr;gap:22px}
 .seg h4{margin:0 0 6px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
-.seg table{min-width:0}
+.seg table{min-width:0;width:100%}
+.seg .tbl{overflow:visible}
+.seg td:first-child,.seg th:first-child{width:38%}
 td.bad{color:var(--p0);font-weight:600} td.good{color:var(--ok)}
 td.sh{white-space:nowrap}
 .mini{display:inline-block;width:38px;height:6px;border-radius:3px;background:var(--line);
@@ -508,6 +515,18 @@ def effect_hint(f):
     return ""
 
 
+def score_ring(score, size=120):
+    """Кольцо с круглым срезом линии: conic-gradient так не умеет, поэтому SVG."""
+    r = size / 2 - 6
+    circ = 2 * 3.14159265 * r
+    cls = "arc" + (" crit" if score < 55 else " warn" if score < 80 else "")
+    return (f'<div class="score"><svg viewBox="0 0 {size} {size}" aria-hidden="true">'
+            f'<circle class="track" cx="{size/2}" cy="{size/2}" r="{r:.1f}"/>'
+            f'<circle class="{cls}" cx="{size/2}" cy="{size/2}" r="{r:.1f}" '
+            f'stroke-dasharray="{circ*score/100:.1f} {circ:.1f}"/></svg>'
+            f'<div class="score-txt"><b>{score}</b><small>из 100</small></div></div>')
+
+
 def section_verdict(a, score, grade, lines, total, cpa, target, live_n):
     kpis = [("Расход", money(total["cost"]), a.period or ""),
             ("Клики", n(total["clicks"]),
@@ -518,9 +537,8 @@ def section_verdict(a, score, grade, lines, total, cpa, target, live_n):
              f"цель {money(target)}" if a.target_cpa else "цель не задана")]
     kh = "".join(f'<div class="kpi"><div class="l">{E(l)}</div><div class="v">{v}</div>'
                  f'<div class="m">{E(m)}</div></div>' for l, v, m in kpis)
-    return (f'<section><div class="verdict">'
-            f'<div class="score" style="--v:{score}"><b>{score}</b><small>из 100</small></div>'
-            f'<div><h3>Аккаунт {E(grade)}</h3><ul>'
+    return (f'<section><div class="verdict">' + score_ring(score)
+            + f'<div><h3>Аккаунт {E(grade)}</h3><ul>'
             + "".join(f"<li>{l}</li>" for l in lines)
             + f'</ul></div></div><div class="kpis">{kh}</div></section>')
 
