@@ -7,6 +7,7 @@ notes/
 # База справки Яндекс Директа — отдельный репозиторий, см. README
 .claude/skills/yandex-direct/docs/
 .claude/skills/yandex-direct-analyst/docs
+.claude/skills/yandex-direct-audit/docs
 
 # Секреты
 .env
@@ -28,3 +29,7 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Слепки и отчёты аудита — данные клиента
+snapshot*.json
+*.tsv
