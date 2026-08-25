@@ -57,6 +57,10 @@ def check_ad(ad, where):
         bad("нет ни одного текста")
     if not (ad.get("href") or "").startswith("http"):
         bad(f"ссылка без протокола или пустая: {ad.get('href')!r}")
+    # Правило проекта: отображаемую ссылку не заполняем.
+    if ad.get("display_path"):
+        bad(f"заполнена отображаемая ссылка «{ad['display_path']}» — по правилу проекта "
+            f"это поле оставляем пустым", "предупреждение")
     dup = [t for t, n in Counter(ad.get("titles", [])).items() if n > 1]
     if dup:
         bad(f"повторяющиеся заголовки: {', '.join(dup)}", "предупреждение")

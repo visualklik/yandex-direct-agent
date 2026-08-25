@@ -48,7 +48,8 @@ def rows_for_group(camp, group, gnum):
             "Номер группы": gnum if i == 0 else "",
             "Фраза (с минус-словами)": keywords[0] if i == 0 and keywords else "",
             "Ссылка": ad.get("href", ""),
-            "Отображаемая ссылка": ad.get("display_path", ""),
+            # Правило проекта: отображаемую ссылку не заполняем — колонка остаётся пустой.
+            "Отображаемая ссылка": "",
             "Регионы": camp.get("geo", "") if i == 0 and gnum == 1 else "",
             "Минус-фразы на группу": ", ".join(group.get("negative_keywords", [])) if i == 0 else "",
             "Уточнения": ", ".join(ad.get("callouts", [])),
