@@ -33,3 +33,8 @@ Thumbs.db
 # Слепки и отчёты аудита — данные клиента
 snapshot*.json
 *.tsv
+
+# Секреты (доп.)
+config.txt
+.env.prev
+.env.*

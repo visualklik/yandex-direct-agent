@@ -117,6 +117,22 @@ def main():
                                            "FieldNames": ["Id", "Sitelinks"]})
             snap["sitelinks"] = sets
 
+        neg_ids = set()
+        for c in camps:
+            b = next((c[k] for k in c if k.endswith("Campaign") and isinstance(c[k], dict)), {})
+            neg_ids |= set((b.get("NegativeKeywordSharedSetIds") or {}).get("Items") or [])
+        for g in snap["adgroups"]:
+            neg_ids |= set((g.get("NegativeKeywordSharedSetIds") or {}).get("Items") or [])
+        neg_ids = sorted(neg_ids)
+        if neg_ids:
+            print("наборы минус-слов…", file=sys.stderr)
+            sets = []
+            for i in range(0, len(neg_ids), 10):
+                sets += call("negativekeywordsharedsets",
+                             {"SelectionCriteria": {"Ids": neg_ids[i:i + 10]},
+                              "FieldNames": ["Id", "Name", "NegativeKeywords", "Type"]})
+            snap["negativekeywordsharedsets"] = sets
+
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False, indent=1)
     print({k: len(v) for k, v in snap.items()}, file=sys.stderr)

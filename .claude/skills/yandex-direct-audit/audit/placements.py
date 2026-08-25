@@ -18,13 +18,26 @@ def num(v):
     return float(str(v).replace("\xa0", "").replace(" ", "").replace("%", "").replace(",", "."))
 
 
+def _norm_conv(rows):
+    """Отчёт с фильтром по цели даёт колонку Conversions_<goal>_<attr>.
+    Приводим её к Conversions, чтобы считалки не зависели от имени."""
+    out = []
+    for r in rows:
+        k = next((k for k in r if k and k.startswith("Conversions") and k != "Conversions"), None)
+        if k:
+            r = dict(r)
+            r["Conversions"] = r.pop(k)
+        out.append(r)
+    return out
+
+
 def load(path):
     lines = open(path, encoding="utf-8-sig").read().splitlines()
     hdr = next((i for i, l in enumerate(lines)
                 if "Placement" in l or "лощадк" in l), None)
     if hdr is None:
         sys.exit("не нашёл строку заголовков с колонкой площадки")
-    return list(csv.DictReader(lines[hdr:], delimiter="\t"))
+    return _norm_conv(list(csv.DictReader(lines[hdr:], delimiter="\t")))
 
 
 def col(row, *names):

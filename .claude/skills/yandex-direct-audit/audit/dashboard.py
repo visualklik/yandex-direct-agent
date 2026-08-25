@@ -31,6 +31,19 @@ def num(v):
         return 0.0
 
 
+def _norm_conv(rows):
+    """Отчёт с фильтром по цели даёт колонку Conversions_<goal>_<attr>.
+    Приводим её к Conversions, чтобы считалки не зависели от имени."""
+    out = []
+    for r in rows:
+        k = next((k for k in r if k and k.startswith("Conversions") and k != "Conversions"), None)
+        if k:
+            r = dict(r)
+            r["Conversions"] = r.pop(k)
+        out.append(r)
+    return out
+
+
 def tsv(path, key_hint=None):
     if not path:
         return []
@@ -38,7 +51,7 @@ def tsv(path, key_hint=None):
     hdr = 0
     if key_hint:
         hdr = next((i for i, l in enumerate(lines) if key_hint in l), 0)
-    return [r for r in csv.DictReader(lines[hdr:], delimiter="\t") if any(r.values())]
+    return _norm_conv([r for r in csv.DictReader(lines[hdr:], delimiter="\t") if any(r.values())])
 
 
 def plural(k, one, few, many):
@@ -151,7 +164,8 @@ def build(a):
     camps = {c["Id"]: c for c in snap["campaigns"]}
     live = {i: c for i, c in camps.items() if c.get("State") == "ON"}
 
-    findings = collect_findings(snap)
+    audit = checks.run(snap)
+    findings = audit["findings"]
     perf = tsv(a.campaigns, "CampaignId")
     days = tsv(a.days, "Date")
     places = tsv(a.placements, "Placement")
@@ -205,7 +219,7 @@ def build(a):
     # вес кампании в расходе — для приоритизации находок
     weight = {k: (v["cost"] / total["cost"] if total["cost"] else 0) for k, v in agg.items()}
 
-    score, grade = compute_score(findings, weight)
+    score, grade = audit["score"], audit["label"]
 
     camp_rows = sorted(
         ({"name": k, "cost": v["cost"], "clicks": v["clicks"], "conv": v["conv"],
@@ -225,29 +239,7 @@ def build(a):
                share=inv_cost / total["cost"] * 100 if total["cost"] else 0) if invisible else None
 
     return render(a, live, camps, findings, score, grade, total, cpa, target,
-                  camp_rows, day_pts, net, pl, inv, urls, segs, queries, traffic, anom)
-
-
-def collect_findings(snap):
-    """Прогон checks.py с перехватом вывода в структуру."""
-    out = []
-    orig = checks.main
-    import io, contextlib
-    buf = io.StringIO()
-    tmp = os.path.join(os.path.dirname(os.path.abspath(snap_path_holder[0])), ".tmp_snap.json")
-    sys.argv = ["checks", snap_path_holder[0]]
-    with contextlib.redirect_stdout(buf):
-        orig()
-    lvl = None
-    for line in buf.getvalue().splitlines():
-        s = line.strip()
-        if s.startswith("──"):
-            lvl = s.split()[1]
-        elif s.startswith("•") and lvl:
-            out.append({"level": lvl, "what": s[1:].strip(), "detail": ""})
-        elif out and s and lvl and not s.startswith("Кампаний"):
-            out[-1]["detail"] = s
-    return out
+                  camp_rows, day_pts, net, pl, inv, urls, segs, queries, traffic, anom, audit)
 
 
 def place_block(places, total):
@@ -269,14 +261,6 @@ def place_block(places, total):
     return dict(rows=rows, total_cost=cost, cr=cr, thr=thr, cand=sorted(cand, key=lambda r: -r["cost"]),
                 tail_cost=sum(r["cost"] for r in tail), tail_n=len(tail),
                 top=sorted(rows, key=lambda r: -r["cost"])[:12])
-
-
-def compute_score(findings, weight):
-    penalty = {checks.CRIT: 14, checks.WARN: 6, checks.INFO: 2}
-    s = 100 - sum(penalty.get(f["level"], 2) for f in findings)
-    s = max(5, min(100, s))
-    grade = "здоровый" if s >= 80 else "рабочий, но с потерями" if s >= 55 else "требует вмешательства"
-    return s, grade
 
 
 # ─────────────────────────── HTML ───────────────────────────
@@ -324,6 +308,10 @@ h2 .num{color:var(--muted);font-weight:400;margin-right:8px}
 .score-txt{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
  justify-content:center;gap:1px;line-height:1}
 .score-txt b{font-size:34px;letter-spacing:-.03em;font-weight:700}
+.qw{border:1px solid var(--ok);background:var(--ok-bg);border-radius:10px;padding:12px 14px;
+ margin:0 0 12px;font-size:13px}
+.qw ul{margin:6px 0 0;padding-left:20px;display:grid;gap:3px}
+.cover{color:var(--muted);font-size:12px;margin:10px 0 0}
 .score-txt small{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}
 .verdict h3{margin:0 0 6px;font-size:19px;letter-spacing:-.015em}
 .verdict ul{margin:8px 0 0;padding-left:18px;font-size:14px;display:grid;gap:5px}
@@ -401,6 +389,12 @@ td.sh{white-space:nowrap}
  border-radius:0 8px 8px 0;font-size:13px;margin:14px 0 0}
 .note.warn{border-color:var(--p1);background:var(--p1-bg)}
 .note.crit{border-color:var(--p0);background:var(--p0-bg)}
+tr.bad-live>td{background:var(--p0-bg)}
+tr.bad-live>td:first-child{box-shadow:inset 3px 0 0 var(--p0)}
+tr.bad-live>td:first-child,tr.bad-live>td:nth-child(2),tr.bad-live>td:nth-child(3){color:var(--p0);font-weight:600}
+tr.bad-off>td{background:var(--p1-bg)}
+tr.bad-off>td:first-child{box-shadow:inset 3px 0 0 var(--p1)}
+tr.bad-off>td:nth-child(2),tr.bad-off>td:nth-child(3){color:var(--p1);font-weight:600}
 footer{color:var(--muted);font-size:12px;margin-top:22px;text-align:center}
 @media (max-width:820px){.cols{grid-template-columns:1fr}.verdict{grid-template-columns:1fr}
  .act{grid-template-columns:auto 1fr}.act .eff{grid-column:2;text-align:left;max-width:none}}
@@ -411,7 +405,7 @@ footer{color:var(--muted);font-size:12px;margin-top:22px;text-align:center}
 
 def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows,
            day_pts, net, pl, inv=None, urls=None, segs=None, queries=None, traffic=None,
-           anom=None):
+           anom=None, audit=None):
     crit = [f for f in findings if f["level"] == checks.CRIT]
     warn = [f for f in findings if f["level"] == checks.WARN]
     info = [f for f in findings if f["level"] == checks.INFO]
@@ -445,16 +439,16 @@ def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows
                              "; ".join(r["url"] for r in bad[:3]),
                              "починить до перезапуска"))
 
-    items = list(url_acts)
+    items = [(p, w, d, h, False) for p, w, d, h in url_acts]
     for f in crit + warn + info:
         hint = effect_hint(f)
         if hint and hint.lower() in f["detail"].lower():
             hint = ""
-        items.append((LEVEL_TO_P[f["level"]], f["what"], f["detail"], hint))
+        items.append((LEVEL_TO_P[f["level"]], f["what"], f["detail"], hint, f.get("quick")))
     items.sort(key=lambda x: (P0, P1, P2).index(x[0]))
 
     acts = []
-    for p, what, detail, hint in items:
+    for p, what, detail, hint, quick in items:
         acts.append(f'<div class="act {p.lower()}"><span class="tag {p.lower()}">{p}</span>'
                     f'<div><div class="what">{E(what)}</div>'
                     f'<div class="why">{E(detail)}</div></div>'
@@ -467,11 +461,16 @@ def render(a, live, camps, findings, score, grade, total, cpa, target, camp_rows
             net_parts.append((label, net[key], cls))
 
     blocks = []
-    blocks.append(section_verdict(a, score, grade, top_line, total, cpa, target, len(live)))
+    blocks.append(section_verdict(a, score, grade, top_line, total, cpa, target, len(live),
+                                  audit))
+    quick_wins = [i for i in items if i[4]]
+    qw = ("" if not quick_wins else
+          '<div class="qw"><b>⚡ Быстрые победы</b> — чинится за 15 минут, эффект сразу:<ul>'
+          + "".join(f'<li>{E(w)}</li>' for _, w, _, _, _ in quick_wins) + "</ul></div>")
     blocks.append(f'<section id="plan"><h2><span class="num">##</span>Что делать первым</h2>'
                   f'<p class="lede">Порядок по влиянию на деньги. P0 — теряется бюджет или '
                   f'данные прямо сейчас, P1 — ограничивает результат, P2 — даст прирост, но не горит.</p>'
-                  f'<div class="actions">{"".join(acts)}</div></section>')
+                  f'{qw}<div class="actions">{"".join(acts)}</div></section>')
     blocks.append(section_campaigns(camp_rows, day_pts, net_parts, target, inv))
     if anom and anom.get("anomalies"):
         blocks.append(section_anomalies(anom))
@@ -537,7 +536,7 @@ def effect_hint(f):
     return ""
 
 
-def score_ring(score, size=120):
+def score_ring(score, size=120, grade=None):
     """Кольцо с круглым срезом линии: conic-gradient так не умеет, поэтому SVG."""
     r = size / 2 - 6
     circ = 2 * 3.14159265 * r
@@ -546,10 +545,11 @@ def score_ring(score, size=120):
             f'<circle class="track" cx="{size/2}" cy="{size/2}" r="{r:.1f}"/>'
             f'<circle class="{cls}" cx="{size/2}" cy="{size/2}" r="{r:.1f}" '
             f'stroke-dasharray="{circ*score/100:.1f} {circ:.1f}"/></svg>'
-            f'<div class="score-txt"><b>{score}</b><small>из 100</small></div></div>')
+            f'<div class="score-txt"><b>{score}</b>'
+            f'<small>{"грейд " + grade if grade else "из 100"}</small></div></div>')
 
 
-def section_verdict(a, score, grade, lines, total, cpa, target, live_n):
+def section_verdict(a, score, grade, lines, total, cpa, target, live_n, audit=None):
     kpis = [("Расход", money(total["cost"]), a.period or ""),
             ("Клики", n(total["clicks"]),
              f'CTR {total["clicks"]/total["imps"]*100:.2f}%' if total["imps"] else ""),
@@ -559,10 +559,18 @@ def section_verdict(a, score, grade, lines, total, cpa, target, live_n):
              f"цель {money(target)}" if a.target_cpa else "цель не задана")]
     kh = "".join(f'<div class="kpi"><div class="l">{E(l)}</div><div class="v">{v}</div>'
                  f'<div class="m">{E(m)}</div></div>' for l, v, m in kpis)
-    return (f'<section><div class="verdict">' + score_ring(score)
+    cover = ""
+    if audit:
+        c = audit["counts"]
+        cover = (f'<p class="cover">Проверок: пройдено {c.get("pass", 0)}, '
+                 f'с замечанием {c.get("warn", 0)}, провалено {c.get("fail", 0)}, '
+                 f'неприменимо {c.get("na", 0)}. Балл считается с весами категорий '
+                 f'и серьёзности, неприменимые исключаются — audit/scoring.md.</p>')
+    return (f'<section><div class="verdict">'
+            + score_ring(score, grade=audit["grade"] if audit else None)
             + f'<div><h3>Аккаунт {E(grade)}</h3><ul>'
             + "".join(f"<li>{l}</li>" for l in lines)
-            + f'</ul></div></div><div class="kpis">{kh}</div></section>')
+            + f'</ul>{cover}</div></div><div class="kpis">{kh}</div></section>')
 
 
 LABELS = {
@@ -757,8 +765,15 @@ def section_urls(urls):
     else:
         note = (f'<p class="note warn">Проблемных адресов: {len(bad)}, но все они только '
                 f'в остановленных объектах. На расход сейчас не влияют, починить до перезапуска.</p>')
+    # Битый адрес в работающем объекте — красная строка: это оплаченные клики в ошибку.
+    # Битый в остановленном — жёлтая: чинить до перезапуска, но деньги сейчас не горят.
+    def row_cls(r):
+        if not r["problem"]:
+            return ""
+        return ' class="bad-live"' if r["active_count"] else ' class="bad-off"'
+
     rows = "".join(
-        f'<tr><td class="mono">{E(r["url"])}</td>'
+        f'<tr{row_cls(r)}><td class="mono">{E(r["url"])}</td>'
         f'<td class="r">{r["status"] or "—"}</td>'
         f'<td>{E(r["problem"] or "норма")}</td>'
         f'<td class="mono">{E(r["detail"])}</td>'
@@ -870,6 +885,14 @@ CODE_HINT = {
 }
 
 
+def span_days(f):
+    """Правила бывают однодневные и многодневные. У полосы без конверсий и сдвига уровня
+    в cost лежит сумма за несколько дней — подписываем период, иначе цифра читается как
+    расход одного дня и не сходится со статистикой."""
+    d = f.get("days", 1)
+    return "" if d <= 1 else f' <span class="hint2">за {d} дн.</span>'
+
+
 def section_anomalies(anom, top=20):
     items = anom["anomalies"]
     shown = items[:top]
@@ -879,7 +902,7 @@ def section_anomalies(anom, top=20):
     body = "".join(
         f'<tr><td class="mono">{E(f["date"])}</td><td>{E(f["scope"])}</td>'
         f'<td><b>{E(f["title"])}</b></td><td>{E(f["detail"])}</td>'
-        f'<td class="r">{money(f["cost"])}</td>'
+        f'<td class="r">{money(f["cost"])}{span_days(f)}</td>'
         f'<td class="hint2">{E(CODE_HINT.get(f["code"], ""))}</td></tr>' for f in shown)
     breaks = by_code.get("F", 0)
     note = ""
@@ -895,7 +918,7 @@ def section_anomalies(anom, top=20):
             f'а не диагноз; правила и пороги описаны в audit/anomalies.md.</p>{note}'
             f'<p class="lede">Найдено {len(items)}, показаны {len(shown)} самых дорогих.</p>'
             f'<div class="tbl"><table><thead><tr><th>Дата</th><th>Где</th><th>Что</th>'
-            f'<th>Детали</th><th class="r">Расход дня</th><th>Куда смотреть</th></tr></thead>'
+            f'<th>Детали</th><th class="r">Расход</th><th>Куда смотреть</th></tr></thead>'
             f'<tbody>{body}</tbody></table></div></section>')
 
 

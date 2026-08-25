@@ -24,9 +24,22 @@ def num(v):
         return 0.0
 
 
+def _norm_conv(rows):
+    """Отчёт с фильтром по цели даёт колонку Conversions_<goal>_<attr>.
+    Приводим её к Conversions, чтобы считалки не зависели от имени."""
+    out = []
+    for r in rows:
+        k = next((k for k in r if k and k.startswith("Conversions") and k != "Conversions"), None)
+        if k:
+            r = dict(r)
+            r["Conversions"] = r.pop(k)
+        out.append(r)
+    return out
+
+
 def tsv(path):
     lines = open(path, encoding="utf-8-sig").read().splitlines()
-    return [r for r in csv.DictReader(lines, delimiter="\t") if any(r.values())]
+    return _norm_conv([r for r in csv.DictReader(lines, delimiter="\t") if any(r.values())])
 
 
 def med(xs):
@@ -80,9 +93,13 @@ def check(days, scope):
     m_imps = med([d["imps"] for d in body])
     m_clicks = med([d["clicks"] for d in body])
 
-    def add(day, code, title, detail, weight):
+    def add(day, code, title, detail, weight, cost=None, days=1):
+        """cost — расход, к которому относится находка. Для однодневных правил это расход дня,
+        для полос и сдвигов уровня — сумма за days дней. Потребитель обязан различать: подпись
+        «расход дня» на семидневной сумме — ложь в отчёте."""
         out.append(dict(date=day["date"], scope=scope, code=code, title=title, detail=detail,
-                        cost=round(day["cost"], 2), conv=day["conv"], weight=round(weight, 1)))
+                        cost=round(day["cost"] if cost is None else cost, 2), days=days,
+                        conv=day["conv"], weight=round(weight, 1)))
 
     zero_streak = []
     for day in body:
@@ -134,13 +151,15 @@ def check(days, scope):
                     f"{len(zero_streak)} дня(ей) подряд без конверсий "
                     f"({zero_streak[0]['date']} — {zero_streak[-1]['date']}) "
                     f"при обычном потоке трафика — проверить счётчик и цели",
-                    sum(d["cost"] for d in zero_streak))
+                    sum(d["cost"] for d in zero_streak),
+                    cost=sum(d["cost"] for d in zero_streak), days=len(zero_streak))
             zero_streak = []
     if len(zero_streak) >= 2:
         add(zero_streak[-1], "F", "обрыв конверсий",
             f"{len(zero_streak)} дня(ей) подряд без конверсий "
             f"({zero_streak[0]['date']} — {zero_streak[-1]['date']})",
-            sum(d["cost"] for d in zero_streak))
+            sum(d["cost"] for d in zero_streak),
+            cost=sum(d["cost"] for d in zero_streak), days=len(zero_streak))
 
     # J — сдвиг уровня: последняя неделя против предыдущих трёх
     if len(body) >= 28:
@@ -151,7 +170,7 @@ def check(days, scope):
                             detail=f"расход последней недели {lm:,.0f} ₽/день против "
                                    f"{pm:,.0f} ₽ ранее — искать правку в журнале изменений"
                                    .replace(",", " "),
-                            cost=round(sum(d['cost'] for d in last), 2), conv=0,
+                            cost=round(sum(d['cost'] for d in last), 2), days=len(last), conv=0,
                             weight=abs(lm - pm) * 7))
     return out
 

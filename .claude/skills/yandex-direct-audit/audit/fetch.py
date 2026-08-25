@@ -53,19 +53,23 @@ SPECS = {
 }
 
 
-def run(name, spec, d_from, d_to, out_dir, tag, tries=12):
+def run(name, spec, d_from, d_to, out_dir, tag, tries=12, goals=None, attribution=None):
     token, login = os.environ.get("DIRECT_TOKEN"), os.environ.get("DIRECT_LOGIN")
     if not token or not login:
         sys.exit("нет DIRECT_TOKEN или DIRECT_LOGIN в окружении")
     sel = {"DateFrom": d_from, "DateTo": d_to}
     if spec.get("filter"):
         sel["Filter"] = spec["filter"]
-    body = json.dumps({"params": {
+    params = {
         "SelectionCriteria": sel, "FieldNames": spec["fields"],
         "OrderBy": [{"Field": "Cost", "SortOrder": "DESCENDING"}] if "Cost" in spec["fields"] else [],
         "ReportName": f"audit_{name}_{tag}", "ReportType": spec["type"],
-        "DateRangeType": "CUSTOM_DATE", "Format": "TSV", "IncludeVAT": "YES"}},
-        ensure_ascii=False).encode()
+        "DateRangeType": "CUSTOM_DATE", "Format": "TSV", "IncludeVAT": "YES"}
+    if goals:
+        params["Goals"] = list(goals)
+    if attribution:
+        params["AttributionModels"] = list(attribution)
+    body = json.dumps({"params": params}, ensure_ascii=False).encode()
     req = lambda: urllib.request.Request(URL, data=body, headers={
         "Authorization": f"Bearer {token}", "Client-Login": login, "Accept-Language": "ru",
         "Content-Type": "application/json; charset=utf-8", "processingMode": "auto",
@@ -94,6 +98,8 @@ def main():
     a.add_argument("--out-dir", default="data")
     a.add_argument("--tag", default="1", help="суффикс имени отчёта: оно уникально в аккаунте")
     a.add_argument("--only", nargs="*", help="скачать только указанные срезы")
+    a.add_argument("--goals", nargs="*", help="id целей Метрики: конверсии считаются только по ним")
+    a.add_argument("--attribution", nargs="*", help="модели атрибуции, напр. LSC LYDC AUTO")
     args = a.parse_args()
 
     d_to = args.date_to or (date.today() - timedelta(days=1)).isoformat()
@@ -103,7 +109,8 @@ def main():
     for name, spec in SPECS.items():
         if args.only and name not in args.only:
             continue
-        run(name, spec, d_from, d_to, args.out_dir, args.tag)
+        run(name, spec, d_from, d_to, args.out_dir, args.tag,
+            goals=args.goals, attribution=args.attribution)
     print(args.out_dir)
 
 
