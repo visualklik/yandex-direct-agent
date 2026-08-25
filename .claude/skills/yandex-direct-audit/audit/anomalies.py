@@ -92,6 +92,7 @@ def check(days, scope):
     m_ctr = med(ctrs)
     m_imps = med([d["imps"] for d in body])
     m_clicks = med([d["clicks"] for d in body])
+    conv_per_day = conv_total / len(body) if body else 0
 
     def add(day, code, title, detail, weight, cost=None, days=1):
         """cost — расход, к которому относится находка. Для однодневных правил это расход дня,
@@ -100,6 +101,25 @@ def check(days, scope):
         out.append(dict(date=day["date"], scope=scope, code=code, title=title, detail=detail,
                         cost=round(day["cost"] if cost is None else cost, 2), days=days,
                         conv=day["conv"], weight=round(weight, 1)))
+
+    def flush_streak(streak):
+        """Полоса нулей — находка, только если за неё ожидались хотя бы три конверсии.
+
+        Кампания с 0,3 конверсии в день сутками стоит без конверсий по своей природе:
+        семь пустых дней там — обычное течение, а не поломка учёта. Порог в три
+        ожидаемые конверсии отсекает именно такие ряды: при пуассоновском потоке
+        вероятность увидеть ноль при ожидании трёх — около 5%.
+        """
+        if len(streak) < 2:
+            return
+        expected = len(streak) * conv_per_day
+        if expected < 3:
+            return
+        add(streak[-1], "F", "обрыв конверсий",
+            f"{len(streak)} дня(ей) подряд без конверсий "
+            f"({streak[0]['date']} — {streak[-1]['date']}) при обычном трафике; "
+            f"ожидалось около {expected:.0f} — проверить счётчик и цели",
+            sum(d["cost"] for d in streak))
 
     zero_streak = []
     for day in body:
@@ -146,20 +166,10 @@ def check(days, scope):
         if day["conv"] == 0 and day["clicks"] >= m_clicks * 0.7 and m_cpa:
             zero_streak.append(day)
         else:
-            if len(zero_streak) >= 2:
-                add(zero_streak[-1], "F", "обрыв конверсий",
-                    f"{len(zero_streak)} дня(ей) подряд без конверсий "
-                    f"({zero_streak[0]['date']} — {zero_streak[-1]['date']}) "
-                    f"при обычном потоке трафика — проверить счётчик и цели",
-                    sum(d["cost"] for d in zero_streak),
-                    cost=sum(d["cost"] for d in zero_streak), days=len(zero_streak))
+            flush_streak(zero_streak)
             zero_streak = []
-    if len(zero_streak) >= 2:
-        add(zero_streak[-1], "F", "обрыв конверсий",
-            f"{len(zero_streak)} дня(ей) подряд без конверсий "
-            f"({zero_streak[0]['date']} — {zero_streak[-1]['date']})",
-            sum(d["cost"] for d in zero_streak),
-            cost=sum(d["cost"] for d in zero_streak), days=len(zero_streak))
+    flush_streak(zero_streak)
+
 
     # J — сдвиг уровня: последняя неделя против предыдущих трёх
     if len(body) >= 28:
