@@ -38,3 +38,7 @@ snapshot*.json
 config.txt
 .env.prev
 .env.*
+
+# Служебные каталоги других агентских инструментов
+.agents/
+.codex/
