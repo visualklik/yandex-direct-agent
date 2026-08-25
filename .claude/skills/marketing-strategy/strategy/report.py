@@ -16,9 +16,11 @@ import argparse, html, json, os, re, sys
 from datetime import date
 
 E = html.escape
-ORDER = ["strategy", "brief", "demand", "personas", "channels", "budget", "kpi", "handoff"]
+ORDER = ["strategy", "brief", "demand", "competitors", "personas", "channels", "budget",
+         "kpi", "handoff"]
 TITLES = {
-    "strategy": "Сводка", "brief": "Бриф", "demand": "Спрос", "personas": "Персоны",
+    "strategy": "Сводка", "brief": "Бриф", "demand": "Спрос", "competitors": "Конкуренты",
+    "personas": "Персоны",
     "channels": "Каналы", "budget": "Бюджет", "kpi": "KPI", "handoff": "Передача",
 }
 
@@ -241,6 +243,68 @@ def budget_block(b):
             + f'<div class="phases">{phases}</div>')
 
 
+STATUS_CLS = {"есть": "ok", "нет": "no", "закрыт защитой": "unk", "не открылся": "unk",
+              "не проверяли": "unk", "проверен": "ok"}
+
+
+def competitors_block(c):
+    """Факты со сканирования + матрица каналов, где у каждой ячейки виден способ проверки."""
+    if not c:
+        return ""
+    comps = c.get("competitors", [])
+    checked = [x for x in comps if x.get("status") == "проверен"]
+    with_prices = [x for x in checked if x.get("has_prices")]
+    branded = [x for x in comps if x.get("brand_searched")]
+    units = [u for x in comps for u in x.get("unit_prices", [])]
+    pos = c.get("our_position") or {}
+
+    tiles = [("Проверено сайтов", f"{len(checked)}/{len(comps)}", "остальные закрыты"),
+             ("С ценами на сайте", str(len(with_prices)), "из проверенных"),
+             ("Цена за м²", pos.get("unit_market", "—") if units else "не найдена", "по рынку"),
+             ("Бренд ищут", str(len(branded)), "из всех проверенных")]
+    kh = "".join(f'<div class="kpi"><div class="l">{E(l)}</div><div class="v">{E(v)}</div>'
+                 f'<div class="m">{E(m)}</div></div>' for l, v, m in tiles)
+
+    rows = ""
+    for x in comps:
+        st = x.get("status", "")
+        chips = "".join(f'<span class="chip obj">{E(cl)}</span>' for cl in x.get("cliches", []))
+        proofs = "".join(f'<span class="chip">{E(pf)}</span>' for pf in x.get("proofs", [])[:4])
+        prices = ", ".join(x.get("unit_prices", [])[:2]) or (
+            f'{min(x["prices"]):,} – {max(x["prices"]):,} ₽'.replace(",", " ")
+            if x.get("prices") else "—")
+        rows += (f'<tr><td><b>{E(x["name"])}</b><div class="muted-s">{E(x.get("title", "")[:60])}</div></td>'
+                 f'<td><span class="tag {STATUS_CLS.get(st, "unk")}">{E(st)}</span></td>'
+                 f'<td>{E(prices)}</td>'
+                 f'<td>{proofs or "—"}</td>'
+                 f'<td>{chips or "—"}</td>'
+                 f'<td>{"ищут" if x.get("brand_searched") else "нет"}</td></tr>')
+
+    matrix = c.get("channels_matrix") or {}
+    mrows = ""
+    for r in matrix.get("rows", []):
+        cells = "".join(f'<td><span class="mark {STATUS_CLS.get(v, "unk")}">{E(v)}</span></td>'
+                        for v in r["cells"])
+        gap = E(r.get("gap", ""))
+        gap_html = f'<b>{gap}</b>' if gap.startswith("GAP") else gap
+        mrows += (f'<tr><td>{E(r["channel"])}</td>{cells}'
+                  f'<td>{E(r.get("density", ""))}</td><td>{gap_html}</td></tr>')
+    heads = "".join(f"<th>{E(x['name'].split()[0])}</th>" for x in comps)
+    matrix_html = ("" if not mrows else
+                   f'<h3>Матрица присутствия</h3>'
+                   f'<p class="lede">{E(matrix.get("method", ""))}</p>'
+                   f'<div class="tbl"><table><thead><tr><th>Канал</th>{heads}'
+                   f'<th>Плотность</th><th>Вывод</th></tr></thead><tbody>{mrows}</tbody></table></div>')
+
+    verdict = (f'<p class="note warn"><b>Позиционирование по цене.</b> {E(pos.get("verdict", ""))} '
+               f'Наши цены: {E(pos.get("prices", "—"))}.</p>' if pos else "")
+
+    return (f'<div class="kpis">{kh}</div>{verdict}'
+            f'<div class="tbl"><table><thead><tr><th>Конкурент</th><th>Статус</th>'
+            f'<th>Цены</th><th>Доказательства</th><th>Штампы</th><th>Бренд</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table></div>{matrix_html}')
+
+
 def personas_block(p):
     if not p:
         return ""
@@ -375,6 +439,14 @@ details.prose[open]{padding-top:12px}
 .persona .chip{font-size:11px;padding:3px 9px}
 .chip.pain{border-color:var(--p1);background:var(--p1-bg);color:var(--p1)}
 .chip.obj{border-color:var(--p0);background:var(--p0-bg);color:var(--p0)}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}
+.tag.no{background:var(--p0-bg);color:var(--p0)}
+.tag.unk{background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+.mark{font-size:11px;padding:2px 7px;border-radius:5px;white-space:nowrap}
+.mark.ok{background:var(--ok-bg);color:var(--ok)}
+.mark.no{background:var(--p0-bg);color:var(--p0)}
+.mark.unk{background:var(--surface-2);color:var(--muted)}
+.muted-s{font-size:11px;color:var(--muted);margin-top:2px}
 .persona-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);
  font-size:12px;color:var(--muted);display:grid;gap:4px}
 /* ── каналы ── */
@@ -442,6 +514,7 @@ def main():
     channels = load(os.path.join(sdir, "channels.json"))
     budget = load(os.path.join(sdir, "budget.json"))
     demand = load(os.path.join(args.project, "data", "demand.json"))
+    competitors = load(os.path.join(args.project, "data", "competitors.json"))
 
     blocks = [hero_block(state, demand, channels)]
     for name in ORDER:
@@ -454,6 +527,8 @@ def main():
         rich = ""
         if name == "demand":
             rich = gaps_block(demand) + demand_block(demand, embed=True)
+        elif name == "competitors":
+            rich = competitors_block(competitors)
         elif name == "personas":
             rich = personas_block(personas)
         elif name == "channels":
@@ -490,7 +565,7 @@ def main():
 <title>Стратегия — {E(title)}</title><style>{CSS}</style></head><body><div class="wrap">
 <header class="top"><div><h1>Стратегия — {E(title)}</h1>
 <div class="sub">{E(site)} · обновлено {E(state.get("updated", date.today().isoformat()))}</div></div>
-<div class="sub">шаг {E(str(state.get("step", "—")))} из 8</div></header>
+<div class="sub">шаг {E(str(state.get("step", "—")))} из 9</div></header>
 <nav class="toc">{toc}</nav>{"".join(numbered)}{tail}
 <footer>Собрано скиллом marketing-strategy. Спрос проверен через API Яндекс Директа,
 отраслевые бенчмарки не используются.</footer></div></body></html>"""
