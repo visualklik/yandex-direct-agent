@@ -295,26 +295,36 @@ def competitors_block(c):
                  f'<td class="brand">{brand}</td></tr>')
 
     matrix = c.get("channels_matrix") or {}
+    # в узкой колонке матрицы длинные подписи не помещаются: показываем короткую,
+    # полную оставляем в подсказке
+    SHORT = {"не проверяли": "?", "закрыт защитой": "защита", "не открылся": "недоступен",
+             "сайт-заглушка": "заглушка"}
     mrows = ""
     for r in matrix.get("rows", []):
-        cells = "".join(f'<td><span class="mark {STATUS_CLS.get(v, "unk")}">{E(v)}</span></td>'
+        cells = "".join(f'<td><span class="mark {STATUS_CLS.get(v, "unk")}" '
+                        f'title="{E(v)}">{E(SHORT.get(v, v))}</span></td>'
                         for v in r["cells"])
         gap = E(r.get("gap", ""))
         gap_html = f'<b>{gap}</b>' if gap.startswith("GAP") else gap
         mrows += (f'<tr><td>{E(r["channel"])}</td>{cells}'
                   f'<td>{E(r.get("density", ""))}</td><td>{gap_html}</td></tr>')
-    heads = "".join(f"<th>{E(x['name'].split()[0])}</th>" for x in comps)
+    def short(name):
+        """«СтройДомКомплект» в колонку 86px не влезает — берём заглавные буквы."""
+        first = name.split()[0]
+        return first if len(first) <= 11 else "".join(re.findall(r"[А-ЯA-Z]", first)) or first[:11]
+
+    heads = "".join(f'<th title="{E(x["name"])}">{E(short(x["name"]))}</th>' for x in comps)
     matrix_html = ("" if not mrows else
                    f'<h3>Матрица присутствия</h3>'
                    f'<p class="lede">{E(matrix.get("method", ""))}</p>'
-                   f'<div class="tbl"><table><thead><tr><th>Канал</th>{heads}'
+                   f'<div class="tbl"><table class="matrix"><thead><tr><th>Канал</th>{heads}'
                    f'<th>Плотность</th><th>Вывод</th></tr></thead><tbody>{mrows}</tbody></table></div>')
 
     verdict = (f'<p class="note warn"><b>Позиционирование по цене.</b> {E(pos.get("verdict", ""))} '
                f'Наши цены: {E(pos.get("prices", "—"))}.</p>' if pos else "")
 
     return (f'<div class="kpis">{kh}</div>{verdict}'
-            f'<div class="tbl"><table><thead><tr><th>Конкурент</th><th>Статус</th>'
+            f'<div class="tbl"><table class="cmp"><thead><tr><th>Конкурент</th><th>Статус</th>'
             f'<th>Цены</th><th>Доказательства</th><th>Штампы</th><th>Бренд</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>{matrix_html}')
 
@@ -462,17 +472,29 @@ details.prose[open]{padding-top:12px}
 .mark.unk{background:var(--surface-2);color:var(--muted)}
 .muted-s{font-size:11px;color:var(--muted);margin-top:2px}
 /* таблица конкурентов: ничего не рвём по словам, ширины фиксируем */
-#competitors table{table-layout:fixed;min-width:640px}
-#competitors th:nth-child(1),#competitors td:nth-child(1){width:22%}
-#competitors th:nth-child(2),#competitors td:nth-child(2){width:12%}
-#competitors th:nth-child(3),#competitors td:nth-child(3){width:14%}
-#competitors th:nth-child(4),#competitors td:nth-child(4){width:22%}
-#competitors th:nth-child(5),#competitors td:nth-child(5){width:22%}
-#competitors th:nth-child(6),#competitors td:nth-child(6){width:8%}
+table.cmp{table-layout:fixed;min-width:640px}
+table.cmp th:nth-child(1),table.cmp td:nth-child(1){width:22%}
+table.cmp th:nth-child(2),table.cmp td:nth-child(2){width:12%}
+table.cmp th:nth-child(3),table.cmp td:nth-child(3){width:14%}
+table.cmp th:nth-child(4),table.cmp td:nth-child(4){width:22%}
+table.cmp th:nth-child(5),table.cmp td:nth-child(5){width:22%}
+table.cmp th:nth-child(6),table.cmp td:nth-child(6){width:8%}
 #competitors td .chips{gap:4px}
 #competitors .chip{white-space:nowrap;font-size:11px;padding:2px 8px}
 #competitors td.price b{white-space:nowrap;font-weight:600}
 #competitors td.brand{text-align:center;color:var(--muted);font-size:12px}
+/* матрица: узкие колонки под конкурентов, вывод — самый широкий столбец */
+table.matrix{table-layout:fixed;min-width:820px;font-size:12px}
+table.matrix th,table.matrix td{padding:7px 8px;vertical-align:middle}
+table.matrix th:first-child,table.matrix td:first-child{width:150px;font-weight:600}
+table.matrix th:not(:first-child):not(:nth-last-child(-n+2)),
+table.matrix td:not(:first-child):not(:nth-last-child(-n+2)){width:86px;text-align:center}
+table.matrix th:nth-last-child(2),table.matrix td:nth-last-child(2){width:82px;
+ color:var(--muted);text-align:center}
+table.matrix th:last-child,table.matrix td:last-child{width:auto;color:var(--muted)}
+table.matrix th{font-size:10px;letter-spacing:.04em;overflow-wrap:anywhere;line-height:1.25}
+table.matrix .mark{font-size:10px;padding:2px 6px}
+table.matrix td:last-child b{color:var(--p1)}
 .tag{display:inline-block;white-space:nowrap}
 .mark{display:inline-block;white-space:nowrap}
 .persona-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);
