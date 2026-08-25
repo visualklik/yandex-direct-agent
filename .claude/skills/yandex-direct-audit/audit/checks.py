@@ -390,6 +390,29 @@ def c_images(ctx):
     return PASS, "изображений в сетевых объявлениях достаточно", ""
 
 
+def c_wide_images(ctx):
+    """Справка прямо рекомендует держать два варианта: стандартный и широкоформатный.
+
+    docs/efficiency/images.md: «создавать два варианта каждого объявления: со стандартным
+    и с широкоформатным изображением. Так вы сможете охватить больше площадок показа».
+    """
+    imgs = ctx["snap"].get("adimages") or []
+    net = {i for i, c in ctx["live"].items()
+           if strategy_types(c)["Network"] not in (None, "SERVING_OFF")}
+    if not imgs or not net:
+        return NA, "показов в сетях нет или библиотека изображений пуста", ""
+    wide = [i for i in imgs if i.get("Type") == "WIDE"]
+    free = [i for i in imgs if i.get("Associated") == "NO"]
+    tail = (f"; не привязано к объявлениям: {len(free)}" if free else "")
+    if not wide:
+        return FAIL, "широкоформатных изображений нет ни одного", \
+            f"всего изображений {len(imgs)} — десктопные площадки недобираются{tail}"
+    if len(wide) < len(imgs) * 0.2:
+        return WARNST, f"широкоформатных изображений {len(wide)} из {len(imgs)}", \
+            f"справка рекомендует держать оба формата — стандартный и широкий{tail}"
+    return PASS, f"оба формата изображений в наличии: широких {len(wide)} из {len(imgs)}", tail
+
+
 def c_sitelinks(ctx):
     if not ctx["live_ads"]:
         return NA, "активных объявлений нет", ""
@@ -492,6 +515,7 @@ CHECKS = [
     ("AD03", "ads", "low", False, "изображения в сетевых объявлениях", c_images),
     ("AD04", "ads", "high", True, "быстрые ссылки", c_sitelinks),
     ("AD05", "ads", "medium", False, "разнообразие посадочных", c_one_landing),
+    ("AD06", "ads", "medium", False, "стандартные и широкоформатные изображения", c_wide_images),
     ("SET01", "settings", "high", True, "мониторинг сайта", c_monitoring),
     ("SET02", "settings", "low", False, "расширенный геотаргетинг", c_geo_wide),
     ("SET03", "settings", "high", False, "бюджет против обучения стратегии", c_budget_learning),

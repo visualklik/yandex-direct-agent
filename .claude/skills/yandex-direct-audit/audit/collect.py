@@ -133,6 +133,11 @@ def main():
                               "FieldNames": ["Id", "Name", "NegativeKeywords", "Type"]})
             snap["negativekeywordsharedsets"] = sets
 
+        print("библиотека изображений…", file=sys.stderr)
+        snap["adimages"] = call("adimages", {
+            "SelectionCriteria": {},
+            "FieldNames": ["AdImageHash", "Name", "Type", "Subtype", "Associated"]})
+
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False, indent=1)
     print({k: len(v) for k, v in snap.items()}, file=sys.stderr)
