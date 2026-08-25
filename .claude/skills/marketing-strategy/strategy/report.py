@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Стратегия в один HTML-файл: markdown-артефакты + графика по данным.
 
-    python3 report.py --project projects/domsegodnya --out projects/domsegodnya/strategy/strategy.html
+    python3 report.py --project projects/<slug> --out projects/<slug>/strategy/strategy.html
 
 Читает `strategy/*.md` и структурированные данные, если они есть: `usp.json`, `personas.json`,
 `channels.json`, `budget.json`, `_state.json`, `data/demand.json`.
