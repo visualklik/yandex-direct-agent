@@ -244,7 +244,7 @@ def budget_block(b):
 
 
 STATUS_CLS = {"есть": "ok", "нет": "no", "закрыт защитой": "unk", "не открылся": "unk",
-              "не проверяли": "unk", "проверен": "ok"}
+              "не проверяли": "unk", "проверен": "ok", "сайт-заглушка": "unk"}
 
 
 def competitors_block(c):
@@ -270,15 +270,29 @@ def competitors_block(c):
         st = x.get("status", "")
         chips = "".join(f'<span class="chip obj">{E(cl)}</span>' for cl in x.get("cliches", []))
         proofs = "".join(f'<span class="chip">{E(pf)}</span>' for pf in x.get("proofs", [])[:4])
-        prices = ", ".join(x.get("unit_prices", [])[:2]) or (
-            f'{min(x["prices"]):,} – {max(x["prices"]):,} ₽'.replace(",", " ")
-            if x.get("prices") else "—")
-        rows += (f'<tr><td><b>{E(x["name"])}</b><div class="muted-s">{E(x.get("title", "")[:60])}</div></td>'
+        # цена за единицу — главное число; общий разброс уводим в подпись, иначе
+        # «18 700 – 857 000 ₽» смешивает цену за метр со стоимостью дома
+        units = x.get("unit_prices", [])
+        if units:
+            vals = sorted({u.split(" ₽")[0]: u for u in units}.values())
+            price_main = f'от {vals[0]}'
+            price_sub = f'до {vals[-1]}' if len(vals) > 1 else ""
+        elif x.get("prices"):
+            price_main = f'от {min(x["prices"]):,} ₽'.replace(",", " ")
+            price_sub = f'до {max(x["prices"]):,} ₽'.replace(",", " ")
+        else:
+            price_main, price_sub = "—", ""
+        brand = ("ищут" if x.get("brand_searched")
+                 else "нет" if x.get("brand_searched") is False else "?")
+        rows += (f'<tr><td><b>{E(x["name"])}</b>'
+                 f'<div class="muted-s">{E(x.get("title", "")[:56])}</div></td>'
                  f'<td><span class="tag {STATUS_CLS.get(st, "unk")}">{E(st)}</span></td>'
-                 f'<td>{E(prices)}</td>'
-                 f'<td>{proofs or "—"}</td>'
-                 f'<td>{chips or "—"}</td>'
-                 f'<td>{"ищут" if x.get("brand_searched") else "нет"}</td></tr>')
+                 f'<td class="price"><b>{E(price_main)}</b>'
+                 + (f'<div class="muted-s">{E(price_sub)}</div>' if price_sub else "")
+                 + f'</td>'
+                 f'<td><div class="chips">{proofs or "—"}</div></td>'
+                 f'<td><div class="chips">{chips or "—"}</div></td>'
+                 f'<td class="brand">{brand}</td></tr>')
 
     matrix = c.get("channels_matrix") or {}
     mrows = ""
@@ -447,6 +461,20 @@ details.prose[open]{padding-top:12px}
 .mark.no{background:var(--p0-bg);color:var(--p0)}
 .mark.unk{background:var(--surface-2);color:var(--muted)}
 .muted-s{font-size:11px;color:var(--muted);margin-top:2px}
+/* таблица конкурентов: ничего не рвём по словам, ширины фиксируем */
+#competitors table{table-layout:fixed;min-width:640px}
+#competitors th:nth-child(1),#competitors td:nth-child(1){width:22%}
+#competitors th:nth-child(2),#competitors td:nth-child(2){width:12%}
+#competitors th:nth-child(3),#competitors td:nth-child(3){width:14%}
+#competitors th:nth-child(4),#competitors td:nth-child(4){width:22%}
+#competitors th:nth-child(5),#competitors td:nth-child(5){width:22%}
+#competitors th:nth-child(6),#competitors td:nth-child(6){width:8%}
+#competitors td .chips{gap:4px}
+#competitors .chip{white-space:nowrap;font-size:11px;padding:2px 8px}
+#competitors td.price b{white-space:nowrap;font-weight:600}
+#competitors td.brand{text-align:center;color:var(--muted);font-size:12px}
+.tag{display:inline-block;white-space:nowrap}
+.mark{display:inline-block;white-space:nowrap}
 .persona-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);
  font-size:12px;color:var(--muted);display:grid;gap:4px}
 /* ── каналы ── */

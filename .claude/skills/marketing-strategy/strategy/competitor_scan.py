@@ -66,6 +66,21 @@ def links(doc, base, host, limit=6):
     return out[:limit]
 
 
+def dedupe_proofs(proofs):
+    """«506 проектов, 489 проектов, 479 проектов» — это один факт, а не три.
+
+    Оставляем по одному, самому крупному, значению на каждую сущность: цифры каталога
+    иначе забивают колонку и вытесняют действительно важное вроде «11 лет».
+    """
+    best = {}
+    for p in proofs:
+        num, word = p.split(" ", 1)
+        key = word.rstrip("аовы").lower()          # проектов/проекта/проект — одно и то же
+        if key not in best or int(num) > int(best[key].split(" ", 1)[0]):
+            best[key] = p
+    return sorted(best.values(), key=lambda s: -int(s.split(" ", 1)[0]))
+
+
 def money(v):
     v = int(re.sub(r"\D", "", v))
     return v if 1000 <= v <= 100_000_000 else None
@@ -140,17 +155,20 @@ def scan(name, url, pages=5, delay=0.5):
 
     joined = " ".join(texts).lower()
     blocked = bool(texts) and bool(ANTIBOT.search(" ".join(texts)[:4000]))
+    # «Сайт в разработке» и прочие заглушки: текста почти нет, выводов делать не из чего
+    stub = bool(texts) and len(joined) < 600
     return dict(name=name, url=url, title=title, description=desc,
                 pages_scanned=len(seen),
                 prices=sorted(prices)[:12], unit_prices=sorted(units)[:6],
                 has_prices=bool(prices or units),
                 phones=sorted(phones)[:3], has_form=forms,
-                proofs=sorted(proofs, key=lambda s: -int(s.split()[0]))[:8],
+                proofs=dedupe_proofs(proofs)[:6],
                 cliches=[c for c in CLICHE if c in joined],
                 errors=errors,
                 # сайт не открылся или отдал пустоту — это «не проверено», а не «нет цен»
                 status=("не открылся" if len(errors) == len(seen)
-                        else "закрыт защитой" if blocked else "проверен"),
+                        else "закрыт защитой" if blocked
+                        else "сайт-заглушка" if stub else "проверен"),
                 checked=date.today().isoformat())
 
 
