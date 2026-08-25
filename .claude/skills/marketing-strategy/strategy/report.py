@@ -3,7 +3,12 @@
 
     python3 report.py --project projects/domsegodnya --out projects/domsegodnya/strategy/strategy.html
 
-Читает `strategy/*.md`, `usp.json`, `_state.json` и `data/demand.json`. Markdown рендерится
+Читает `strategy/*.md` и структурированные данные, если они есть: `usp.json`, `personas.json`,
+`channels.json`, `budget.json`, `_state.json`, `data/demand.json`.
+
+Правило вёрстки: **где есть структура — рисуем её, текст уходит под спойлер «подробности»**.
+Отчёт читают сверху вниз и обычно не целиком, поэтому первый экран — вывод и четыре цифры,
+дальше визуальные блоки, а сплошной текст остаётся доказательной базой для того, кто копает. Markdown рендерится
 своим минимальным конвертером — внешних зависимостей нет, файл самодостаточный: ни шрифтов,
 ни скриптов снаружи. Оформление то же, что у дашборда аудита (audit/dashboard.md).
 """
@@ -84,7 +89,7 @@ def md(text):
 
 # ─────────────────────────── блоки по данным ───────────────────────────
 
-def demand_block(data):
+def demand_block(data, embed=False):
     if not data:
         return ""
     themes = data.get("themes", [])
@@ -98,8 +103,7 @@ def demand_block(data):
                  f'<div class="bar-track"><div class="bar-fill {cls}" '
                  f'style="width:{share}%"></div></div>'
                  f'<div class="bar-val">{len(t["live"])}/{len(t["phrases"])}</div></div>')
-    return (f'<section id="demand-data"><h2><span class="num">##</span>Проверка спроса</h2>'
-            f'<p class="lede">Каждая тема — набор формулировок, проверенных через API Директа '
+    inner = (f'<p class="lede">Каждая тема — набор формулировок, проверенных через API Директа '
             f'на наличие показов в регионе. Полоса — доля фраз со спросом.</p>'
             f'<div class="kpis"><div class="kpi"><div class="l">Тем проверено</div>'
             f'<div class="v">{len(themes)}</div></div>'
@@ -108,7 +112,11 @@ def demand_block(data):
             f'<div class="m">{live / total * 100:.0f}% от проверенных</div></div>'
             f'<div class="kpi"><div class="l">Регионы</div>'
             f'<div class="v">{", ".join(str(x) for x in data.get("geo", []))}</div></div></div>'
-            f'<div class="bars">{rows}</div></section>')
+            f'<div class="bars">{rows}</div>')
+    if embed:
+        return inner
+    return (f'<section id="demand-data"><h2><span class="num">##</span>Проверка спроса</h2>'
+            f'{inner}</section>')
 
 
 def usp_block(u):
@@ -138,6 +146,120 @@ def usp_block(u):
                f'<div class="tbl"><table><thead><tr><th>Формулировка</th><th>Почему нет</th>'
                f'</tr></thead><tbody>{rejected}</tbody></table></div></details>' if rejected else "")
             + "</section>")
+
+
+def hero_block(state, demand, channels):
+    """Первый экран: вывод одной фразой и цифры, ради которых читают отчёт."""
+    live = total = 0
+    if demand:
+        live = sum(len(t["live"]) for t in demand.get("themes", []))
+        total = sum(len(t["phrases"]) for t in demand.get("themes", []))
+    top = ""
+    if channels:
+        best = sorted((c for c in channels["channels"] if c.get("rank")),
+                      key=lambda c: c["rank"])
+        top = " → ".join(c["name"] for c in best[:3])
+    tiles = [("Спрос подтверждён", f"{live}/{total}", "фраз со спросом" if total else ""),
+             ("Топ-канал", (top.split(" → ")[0] if top else "—"), "по сумме баллов"),
+             ("Шаг", f'{state.get("step", "—")}/8', state.get("mode", "")),
+             ("Открытых вопросов", str(len(state.get("blocked_on") or [])), "ждём от клиента")]
+    kh = "".join(f'<div class="kpi"><div class="l">{E(l)}</div><div class="v">{E(v)}</div>'
+                 f'<div class="m">{E(m)}</div></div>' for l, v, m in tiles)
+    verdict = state.get("verdict") or ""
+    chain = (f'<div class="chain">{"".join(f"<span class=chain-item>{E(x)}</span>" for x in top.split(" → "))}</div>'
+             if top else "")
+    return (f'<section class="hero"><div class="hero-grid"><div>'
+            f'<div class="eyebrow">Вывод</div>'
+            f'<p class="verdict">{E(verdict)}</p>{chain}</div></div>'
+            f'<div class="kpis">{kh}</div></section>')
+
+
+def gaps_block(demand):
+    """Темы со спросом, под которые нет посадочной, — главная находка проверки."""
+    gaps = (demand or {}).get("gaps") or []
+    if not gaps:
+        return ""
+    tiles = "".join(
+        f'<div class="gap"><div class="gap-theme">{E(g["theme"])}</div>'
+        f'<div class="gap-status">{E(g["status"])}</div>'
+        f'<div class="gap-site">{E(g["site"])}</div></div>' for g in gaps)
+    return (f'<div class="note warn"><b>Спрос есть, посадочной нет.</b> Вести туда рекламу '
+            f'нельзя: объявление обещает то, чего страница не подтверждает.</div>'
+            f'<div class="gaps">{tiles}</div>')
+
+
+def channels_block(ch):
+    if not ch:
+        return ""
+    crit = ch["criteria"]
+    rows = []
+    for c in sorted(ch["channels"], key=lambda c: -sum(c["scores"])):
+        total = sum(c["scores"])
+        medal = {1: "1", 2: "2", 3: "3"}.get(c.get("rank"), "")
+        cells = "".join(
+            f'<span class="dots" title="{E(name)}: {v}">' +
+            "".join(f'<i class="{"on" if k < v else ""}"></i>' for k in range(3)) + "</span>"
+            for name, v in zip(crit, c["scores"]))
+        rows.append(
+            f'<div class="chan{" top" if medal else ""}">'
+            f'<div class="chan-name">{"<b class=rank>" + medal + "</b>" if medal else ""}'
+            f'{E(c["name"])}</div>'
+            f'<div class="chan-dots">{cells}</div>'
+            f'<div class="chan-bar"><div class="bar-track"><div class="bar-fill" '
+            f'style="width:{total / (len(crit) * 3) * 100:.0f}%"></div></div>'
+            f'<span class="chan-total">{total}</span></div>'
+            f'<div class="chan-why">{E(c.get("why", ""))}</div></div>')
+    legend = " · ".join(E(x) for x in crit)
+    return (f'<p class="lede">Шесть критериев по три балла: {legend}. '
+            f'Точки — оценка по каждому, полоса — сумма.</p>'
+            f'<div class="chans">{"".join(rows)}</div>')
+
+
+def budget_block(b):
+    if not b:
+        return ""
+    colors = ["a", "b", "c"]
+    phases = ""
+    for i, p in enumerate(b["phases"]):
+        split = "".join(
+            f'<div class="split-row"><span>{E(x["ch"])}</span>'
+            f'<div class="bar-track"><div class="bar-fill" style="width:{x["pct"]}%"></div></div>'
+            f'<span class="pct">{x["pct"]}%</span></div>' for x in p["split"])
+        phases += (f'<div class="phase"><div class="phase-head">'
+                   f'<span class="phase-n {colors[i % 3]}">{i + 1}</span>'
+                   f'<div><div class="phase-name">{E(p["name"])}</div>'
+                   f'<div class="phase-weeks">{E(p["weeks"])}</div></div>'
+                   f'<div class="phase-share">{p["share"]}%</div></div>'
+                   f'<p class="phase-goal">{E(p["goal"])}</p>{split}</div>')
+    ruler = "".join(f'<div class="ruler-part {colors[i % 3]}" style="flex:{p["share"]}">'
+                    f'{E(p["name"])} · {p["share"]}%</div>'
+                    for i, p in enumerate(b["phases"]))
+    return (f'<div class="ruler">{ruler}</div>'
+            f'<div class="formula"><span class="formula-label">Порог обучения</span>'
+            f'<code>{E(b["formula"])}</code></div>'
+            + (f'<p class="note warn">{E(b["note"])}</p>' if b.get("note") else "")
+            + f'<div class="phases">{phases}</div>')
+
+
+def personas_block(p):
+    if not p:
+        return ""
+    cards = ""
+    for x in p["personas"]:
+        chips = lambda items, cls: "".join(
+            f'<span class="chip {cls}">{E(i)}</span>' for i in items)
+        cards += (f'<div class="persona"><div class="persona-top">'
+                  f'<span class="persona-icon">{E(x.get("icon", ""))}</span>'
+                  f'<div><div class="persona-name">{E(x["name"])}</div>'
+                  f'<div class="persona-channel">{E(x.get("channel", ""))}</div></div></div>'
+                  f'<p class="jtbd">«{E(x["jtbd"])}»</p>'
+                  f'<h4>Ищет так</h4><div class="chips">{chips(x.get("search", []), "")}</div>'
+                  f'<h4>Боли</h4><div class="chips">{chips(x.get("pains", []), "pain")}</div>'
+                  f'<h4>Возражения</h4><div class="chips">{chips(x.get("objections", []), "obj")}</div>'
+                  f'<div class="persona-foot"><div><b>Сообщение:</b> {E(x.get("message", ""))}</div>'
+                  f'<div><b>Чем закрываем:</b> {E(x.get("answer", ""))}</div></div></div>')
+    common = (f'<p class="note">{E(p["common"])}</p>' if p.get("common") else "")
+    return f'<div class="personas">{cards}</div>{common}'
 
 
 CSS = """
@@ -220,6 +342,85 @@ summary::-webkit-details-marker{display:none}
 summary::before{content:"▸ ";color:var(--accent)}
 details[open] summary::before{content:"▾ "}
 footer{color:var(--muted);font-size:12px;margin-top:20px;text-align:center}
+/* ── первый экран ── */
+.hero{background:linear-gradient(180deg,var(--accent-soft),var(--surface) 70%)}
+.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);
+ font-weight:700}
+.verdict{font-size:clamp(16px,2vw,21px);line-height:1.4;letter-spacing:-.01em;margin:8px 0 0;
+ max-width:60ch}
+.chain{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center}
+.chain-item{font-size:12px;font-weight:600;background:var(--surface);border:1px solid var(--line);
+ border-radius:999px;padding:5px 12px;position:relative}
+.chain-item:not(:last-child)::after{content:"→";position:absolute;right:-14px;top:5px;
+ color:var(--muted);font-weight:400}
+/* ── текст под спойлером ── */
+.prose{max-width:74ch}
+.prose>summary{margin-bottom:6px}
+details.prose[open]{padding-top:12px}
+/* ── дыры спроса ── */
+.gaps{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:12px 0}
+.gap{border:1px solid var(--p1);background:var(--p1-bg);border-radius:10px;padding:12px 14px}
+.gap-theme{font-weight:650;font-size:14px}
+.gap-status{font-size:12px;color:var(--ok);margin-top:4px}
+.gap-site{font-size:12px;color:var(--muted);margin-top:4px}
+/* ── персоны ── */
+.personas{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:12px 0}
+.persona{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--surface-2)}
+.persona-top{display:flex;gap:12px;align-items:center}
+.persona-icon{font-size:26px;line-height:1}
+.persona-name{font-weight:650;font-size:15px}
+.persona-channel{font-size:12px;color:var(--accent);font-weight:600}
+.jtbd{font-size:14px;font-style:italic;color:var(--ink);margin:10px 0;line-height:1.4}
+.persona h4{margin:12px 0 5px}
+.persona .chip{font-size:11px;padding:3px 9px}
+.chip.pain{border-color:var(--p1);background:var(--p1-bg);color:var(--p1)}
+.chip.obj{border-color:var(--p0);background:var(--p0-bg);color:var(--p0)}
+.persona-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);
+ font-size:12px;color:var(--muted);display:grid;gap:4px}
+/* ── каналы ── */
+.chans{display:grid;gap:8px;margin:12px 0}
+.chan{display:grid;grid-template-columns:minmax(150px,1.1fr) auto minmax(120px,.8fr) 1.6fr;
+ gap:14px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
+ background:var(--surface-2);font-size:13px}
+.chan.top{border-color:var(--accent);background:var(--accent-soft)}
+.chan-name{font-weight:600;display:flex;align-items:center;gap:8px}
+.rank{width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;
+ display:grid;place-items:center;flex:0 0 auto}
+.chan-dots{display:flex;gap:6px}
+.dots{display:flex;gap:2px}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--line);display:block}
+.dots i.on{background:var(--accent)}
+.chan-bar{display:flex;align-items:center;gap:8px}
+.chan-bar .bar-track{flex:1}
+.chan-total{font-weight:650;font-size:13px;min-width:18px;text-align:right}
+.chan-why{color:var(--muted);font-size:12px}
+/* ── бюджет ── */
+.ruler{display:flex;gap:3px;margin:14px 0;font-size:11px;font-weight:600}
+.ruler-part{padding:9px 12px;border-radius:8px;color:#fff;white-space:nowrap;overflow:hidden;
+ text-overflow:ellipsis}
+.ruler-part.a{background:var(--accent)}
+.ruler-part.b{background:color-mix(in srgb,var(--accent) 70%,var(--p2,#2f5eb0))}
+.ruler-part.c{background:color-mix(in srgb,var(--accent) 40%,#6b7280)}
+.formula{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;
+ border:1px dashed var(--accent);border-radius:10px;padding:10px 14px}
+.formula-label{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.formula code{font-size:14px;background:none;border:0}
+.phases{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin-top:12px}
+.phase{border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--surface-2)}
+.phase-head{display:flex;gap:10px;align-items:center}
+.phase-n{width:24px;height:24px;border-radius:8px;color:#fff;display:grid;place-items:center;
+ font-size:12px;font-weight:700;flex:0 0 auto}
+.phase-n.a{background:var(--accent)}
+.phase-n.b{background:color-mix(in srgb,var(--accent) 70%,#2f5eb0)}
+.phase-n.c{background:color-mix(in srgb,var(--accent) 40%,#6b7280)}
+.phase-name{font-weight:650;font-size:14px}
+.phase-weeks{font-size:12px;color:var(--muted)}
+.phase-share{margin-left:auto;font-size:18px;font-weight:700;letter-spacing:-.02em}
+.phase-goal{font-size:12px;color:var(--muted);margin:8px 0 10px}
+.split-row{display:grid;grid-template-columns:minmax(70px,auto) 1fr auto;gap:8px;
+ align-items:center;font-size:12px;margin:4px 0}
+.split-row .pct{color:var(--muted)}
+@media (max-width:720px){.chan{grid-template-columns:1fr;gap:8px}}
 @media print{body{background:#fff}section{break-inside:avoid;box-shadow:none}
  nav.toc{display:none}details{display:block}summary{display:none}}
 """
@@ -237,19 +438,32 @@ def main():
     load = lambda p: json.load(open(p, encoding="utf-8")) if os.path.exists(p) else None
     state = load(os.path.join(sdir, "_state.json")) or {}
     usp = load(os.path.join(sdir, "usp.json"))
+    personas = load(os.path.join(sdir, "personas.json"))
+    channels = load(os.path.join(sdir, "channels.json"))
+    budget = load(os.path.join(sdir, "budget.json"))
     demand = load(os.path.join(args.project, "data", "demand.json"))
 
-    blocks = []
+    blocks = [hero_block(state, demand, channels)]
     for name in ORDER:
         path = os.path.join(sdir, name + ".md")
         if not os.path.exists(path):
             continue
         body = md(open(path, encoding="utf-8").read())
         body = re.sub(r"^<h2>.*?</h2>", "", body, count=1)      # заголовок даёт секция
+        # структурированные блоки идут первыми в секции, текст — под ними «подробностями»
+        rich = ""
+        if name == "demand":
+            rich = gaps_block(demand) + demand_block(demand, embed=True)
+        elif name == "personas":
+            rich = personas_block(personas)
+        elif name == "channels":
+            rich = channels_block(channels)
+        elif name == "budget":
+            rich = budget_block(budget)
+        wrapped = (f'<details class="prose"><summary>Подробности текстом</summary>{body}</details>'
+                   if rich else f'<div class="prose">{body}</div>')
         blocks.append(f'<section id="{name}"><h2><span class="num">##</span>'
-                      f'{E(TITLES.get(name, name))}</h2>{body}</section>')
-        if name == "demand" and demand:
-            blocks.append(demand_block(demand))
+                      f'{E(TITLES.get(name, name))}</h2>{rich}{wrapped}</section>')
         if name == "personas" and usp:
             blocks.append(usp_block(usp))
 
