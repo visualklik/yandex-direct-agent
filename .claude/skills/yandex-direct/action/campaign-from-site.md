@@ -6,13 +6,17 @@
 Скрипты делают детерминированную работу — обход сайта, отсев пустых фраз, проверку лимитов,
 сборку файла. Тексты пишу я: это то место, где нужен смысл, а не регулярка.
 
+Один проект — одна папка `projects/<slug>/` (см. `../../marketing-strategy/SKILL.md`).
+Файлы кампании кладём в `projects/<slug>/campaigns/`, сырьё — в `data/`.
+
 ```bash
 S=.claude/skills/yandex-direct/action
+P=projects/<slug>
 
-python3 $S/site_scan.py https://site.ru --out site.json
-python3 $S/keyword_volume.py --file keywords.txt --geo 11036,11029 --out keywords.json
-python3 $S/adtext_check.py campaign.json
-python3 $S/xls_build.py campaign.json --out campaign.xlsx
+python3 $S/site_scan.py https://site.ru --out $P/data/site.json
+python3 $S/keyword_volume.py --file $P/data/keywords.txt --geo 11036,11029 --out $P/data/keywords.json
+python3 $S/adtext_check.py $P/campaigns/campaign.json
+python3 $S/xls_build.py $P/campaigns/campaign.json --out $P/campaigns/campaign.xlsx
 ```
 
 ## 1. Разбор сайта — `site_scan.py`

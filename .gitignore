@@ -1,4 +1,6 @@
 # Данные клиентов — не публикуются
+# Один проект — одна папка: projects/<имя проекта>/{strategy,campaigns,audit,data}
+projects/
 campaigns/
 reports/
 e-16512855/
