@@ -61,6 +61,48 @@ def bars(rows, label_key, value_key, note_key=None, fmt=n):
     return "".join(out)
 
 
+def sparkline(points, w=760, h=90):
+    """Линия визитов и столбики достижений главной цели: расхождение форм — повод копать."""
+    if len(points) < 2:
+        return ""
+    vis = [p["visits"] for p in points]
+    goals = [p["goal"] for p in points]
+    vmax, gmax = max(vis) or 1, max(goals) or 1
+    dx = w / (len(points) - 1)
+    line = " ".join(f"{i*dx:.1f},{h - v/vmax*(h-18):.1f}" for i, v in enumerate(vis))
+    bars_svg = "".join(
+        f'<rect x="{i*dx-2.5:.1f}" y="{h - g/gmax*(h-28):.1f}" width="5" rx="1.5" '
+        f'height="{max(g/gmax*(h-28), 0):.1f}" class="spark-bar{" zero" if g == 0 else ""}"/>'
+        for i, g in enumerate(goals))
+    return (f'<svg class="spark" viewBox="0 0 {w} {h}" preserveAspectRatio="none" role="img" '
+            f'aria-label="Визиты и достижения цели по дням">{bars_svg}'
+            f'<polyline points="{line}" class="spark-line"/></svg>')
+
+
+def gap_runs(points):
+    """Полосы дней без достижений при живом трафике — там, где их не должно быть.
+
+    Порог тот же, что в аномалиях Директа: полоса считается находкой, только если
+    за неё ожидалось не меньше трёх достижений. Иначе редкая цель даёт ложные тревоги.
+    """
+    if not points:
+        return []
+    per_day = sum(p["goal"] for p in points) / len(points)
+    med_visits = sorted(p["visits"] for p in points)[len(points) // 2]
+    runs, cur = [], []
+    for p in points:
+        if p["goal"] == 0 and p["visits"] >= med_visits * 0.5:
+            cur.append(p)
+        else:
+            if len(cur) >= 2 and len(cur) * per_day >= 3:
+                runs.append(cur)
+            cur = []
+    if len(cur) >= 2 and len(cur) * per_day >= 3:
+        runs.append(cur)
+    return [dict(start=r[0]["date"], end=r[-1]["date"], days=len(r),
+                 expected=len(r) * per_day, visits=sum(x["visits"] for x in r)) for r in runs]
+
+
 # ─────────────────────────── разбор отчётов ───────────────────────────
 
 def report_rows(rep, limit=None):
@@ -124,6 +166,39 @@ def section_goals(snap, reports):
               f'<tbody>{body}</tbody></table></div></details></section>')
 
 
+def section_dynamics(reports):
+    rep = reports.get("days_goal")
+    if not rep or not rep.get("data"):
+        return ""
+    points = []
+    for row in sorted(rep["data"], key=lambda r: r["dimensions"][0].get("name") or ""):
+        points.append(dict(date=row["dimensions"][0].get("name", ""),
+                           visits=row["metrics"][0], goal=row["metrics"][1]))
+    goal_name = rep.get("main_goal_name") or "главная цель"
+    runs = gap_runs(points)
+    total_goal = sum(p["goal"] for p in points)
+    zero_days = sum(1 for p in points if p["goal"] == 0)
+
+    note = ""
+    if runs:
+        worst = max(runs, key=lambda r: r["expected"])
+        note = (f'<p class="note warn"><b>Полос без достижений: {len(runs)}.</b> '
+                f'Самая длинная — {worst["days"]} дн. ({E(worst["start"])} — {E(worst["end"])}), '
+                f'за это время ожидалось около {worst["expected"]:.0f} достижений '
+                f'при {n(worst["visits"])} визитах. Проверить форму, счётчик и саму цель; '
+                f'если это выходные или сезон — так и отметить.</p>')
+    tiles = [("Достижений за период", n(total_goal), E(goal_name)),
+             ("Дней без достижений", f"{zero_days} из {len(points)}", ""),
+             ("Подозрительных полос", str(len(runs)), "при живом трафике")]
+    kh = "".join(f'<div class="kpi"><div class="l">{E(l)}</div><div class="v">{v}</div>'
+                 f'<div class="m">{m}</div></div>' for l, v, m in tiles)
+    return (f'<section id="dynamics"><h2><span class="num">##</span>Динамика и обрывы</h2>'
+            f'<p class="lede">Линия — визиты по дням, столбики — достижения цели '
+            f'«{E(goal_name)}». Провал столбиков при ровной линии визитов означает, '
+            f'что сломался учёт, а не реклама.</p>'
+            f'<div class="kpis">{kh}</div>{sparkline(points)}{note}</section>')
+
+
 def section_traffic(reports):
     src = report_rows(reports.get("sources"), 10)
     dev = report_rows(reports.get("devices"), 6)
@@ -172,6 +247,38 @@ def section_direct(reports):
 
 
 def section_landing(reports):
+    """С конверсией по главной цели: без неё таблица посадочных ничего не решает."""
+    rep = reports.get("landing_goal")
+    if rep and rep.get("data"):
+        rows = report_rows(rep, 15)
+        goal_name = rep.get("main_goal_name") or "главная цель"
+        crs = [r["m"][3] for r in rows if r["m"][0] >= 30]
+        median_cr = sorted(crs)[len(crs) // 2] if crs else 0
+        body = ""
+        for r in rows:
+            visits, bounce, reaches, cr = r["m"][0], r["m"][1], r["m"][2], r["m"][3]
+            cls = ""
+            if visits >= 30 and median_cr:
+                cls = " good" if cr >= median_cr * 1.5 else (" bad" if cr < median_cr / 2 else "")
+            body += (f'<tr><td class="mono">{E(r["name"][:66])}</td>'
+                     f'<td class="r">{n(visits)}</td><td class="r">{pct(bounce)}</td>'
+                     f'<td class="r">{n(reaches)}</td>'
+                     f'<td class="r{cls}">{pct(cr, 2)}</td></tr>')
+        best = max((r for r in rows if r["m"][0] >= 30), key=lambda r: r["m"][3], default=None)
+        note = ""
+        if best and median_cr and best["m"][3] >= median_cr * 1.5:
+            note = (f'<p class="note"><b>Лучшая посадочная:</b> {E(best["name"][:60])} — '
+                    f'конверсия {pct(best["m"][3], 2)} против медианных {pct(median_cr, 2)}. '
+                    f'Это готовый ответ, куда вести рекламный трафик.</p>')
+        return (f'<section id="landing"><h2><span class="num">##</span>Посадочные</h2>'
+                f'<p class="lede">Страницы входа с конверсией по цели «{E(goal_name)}». '
+                f'Зелёным — вдвое лучше медианы, красным — вдвое хуже; '
+                f'строки меньше 30 визитов не подсвечиваются, там нет статистики.</p>'
+                f'<div class="tbl"><table><thead><tr><th>Страница входа</th>'
+                f'<th class="r">Визиты</th><th class="r">Отказы</th>'
+                f'<th class="r">Достижения</th><th class="r">Конверсия</th></tr></thead>'
+                f'<tbody>{body}</tbody></table></div>{note}</section>')
+
     rows = report_rows(reports.get("landing"), 15)
     if not rows:
         return ""
@@ -180,8 +287,8 @@ def section_landing(reports):
         f'<td class="r">{pct(r["m"][2])}</td><td class="r">{r["m"][4]:.1f}</td></tr>'
         for r in rows)
     return (f'<section id="landing"><h2><span class="num">##</span>Посадочные</h2>'
-            f'<p class="lede">Страницы входа по объёму. Высокие отказы при заметном трафике — '
-            f'первый кандидат на разбор в вебвизоре.</p>'
+            f'<p class="lede">Страницы входа по объёму. Конверсия не собрана — '
+            f'главная цель не определена.</p>'
             f'<div class="tbl"><table><thead><tr><th>Страница входа</th>'
             f'<th class="r">Визиты</th><th class="r">Отказы</th><th class="r">Глубина</th>'
             f'</tr></thead><tbody>{body}</tbody></table></div></section>')
@@ -289,6 +396,14 @@ h4{font-size:12px;margin:0 0 6px;color:var(--muted);text-transform:uppercase;let
 .bar-fill.warn{background:var(--p1)}.bar-fill.bad{background:var(--p0)}
 .bar-val{font-size:12px;white-space:nowrap}
 .bar-sec{color:var(--muted);margin-left:8px}
+.delta{display:inline-block;font-size:11px;font-weight:600;margin-left:4px}
+.delta.up{color:var(--ok)}.delta.down{color:var(--p1)}
+.spark{width:100%;height:90px;margin:6px 0}
+.spark-line{fill:none;stroke:var(--accent);stroke-width:2;stroke-linejoin:round}
+.spark-bar{fill:var(--accent);opacity:.35}
+.spark-bar.zero{fill:var(--p0);opacity:.5}
+td.good{color:var(--ok);font-weight:600}
+td.bad{color:var(--p0);font-weight:600}
 .segs{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:14px}
 .tbl{overflow-x:auto;margin-top:10px;border:1px solid var(--line);border-radius:10px}
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -319,6 +434,8 @@ def main():
     a.add_argument("--snapshot", required=True)
     a.add_argument("--reports", required=True)
     a.add_argument("--period", default="")
+    a.add_argument("--period-len", type=int, default=30,
+                   help="длина периода в днях — для подписи дельт")
     a.add_argument("--out", default="metrika-audit.html")
     args = a.parse_args()
 
@@ -364,13 +481,35 @@ def main():
           '<div class="qw"><b>⚡ Быстрые победы</b> — чинится за 15 минут:<ul>'
           + "".join(f"<li>{E(x)}</li>" for x in quick) + "</ul></div>")
 
-    kpis = [("Визиты", n(visits), args.period),
-            ("Пользователи", n(users), ""),
-            ("Отказы", pct(bounce), "по всему трафику"),
-            ("Время на сайте", f"{dur/60:.1f} мин", ""),
+    # дельты к предыдущему периоду такой же длины
+    cmp_rep = reports.get("compare") or {}
+    prev = (cmp_rep.get("totals") or {}).get("b") if isinstance(cmp_rep.get("totals"), dict) else None
+
+    def delta(cur, idx):
+        if not prev or idx >= len(prev) or not prev[idx]:
+            return ""
+        diff = (cur - prev[idx]) / prev[idx] * 100
+        arrow = "↑" if diff > 0 else "↓" if diff < 0 else "="
+        cls = "up" if diff > 0 else "down" if diff < 0 else ""
+        return (f'<span class="delta {cls}">{arrow} {abs(diff):.0f}% '
+                f'к прошлым {args.period_len} дн.</span>')
+
+    health = (reports.get("health") or {}).get("totals") or []
+    robots = health[2] if len(health) > 2 else None
+    new_share = health[3] if len(health) > 3 else None
+    mobile = health[4] if len(health) > 4 else None
+
+    kpis = [("Визиты", n(visits), args.period + " " + delta(visits, 0)),
+            ("Пользователи", n(users), delta(users, 1)),
+            ("Отказы", pct(bounce), "по всему трафику " + delta(bounce, 2)),
+            ("Время на сайте", f"{dur/60:.1f} мин", delta(dur, 3)),
             ("Целей", f'{len(stats)}', f"молчат {dead}" if dead else "все работают")]
+    if robots is not None:
+        kpis += [("Роботы", pct(robots), "отфильтровано"),
+                 ("Новые посетители", pct(new_share), "от всех"),
+                 ("Мобильные", pct(mobile), "доля визитов")]
     kh = "".join(f'<div class="kpi"><div class="l">{E(l)}</div><div class="v">{E(v)}</div>'
-                 f'<div class="m">{E(m)}</div></div>' for l, v, m in kpis)
+                 f'<div class="m">{m}</div></div>' for l, v, m in kpis)
 
     blocks = [
         f'<section><div class="verdict">' + score_ring(audit["score"], audit["grade"])
@@ -383,6 +522,7 @@ def main():
         f'<p class="lede">P0 — цифры врут прямо сейчас, P1 — часть данных теряется, '
         f'P2 — гигиена учёта.</p>{qw}<div class="actions">{"".join(acts)}</div></section>',
         section_goals(snap, reports),
+        section_dynamics(reports),
         section_traffic(reports),
         section_direct(reports),
         section_landing(reports),

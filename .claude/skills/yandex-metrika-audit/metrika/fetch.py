@@ -8,9 +8,12 @@
 `sample_share`) сохраняется как есть и выводится в консоль: цифра, посчитанная
 по 10% выборке, — это оценка, и отчёт обязан об этом говорить.
 """
-import argparse, json, os, sys, time, urllib.error, urllib.parse, urllib.request
+import argparse, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 
 BASE = "https://api-metrika.yandex.net/stat/v1/data"
+COMPARE = BASE + "/comparison"
+# цели вроде «Посетил сайт» срабатывают почти на каждом визите: главной такую брать нельзя
+JUNK_GOAL = re.compile(r"(посетил сайт|просмотр|визит больше|время на сайте|глубина)", re.I)
 CORE = "ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:avgVisitDurationSeconds,ym:s:pageDepth"
 
 # имя → (измерения, метрики). Пресеты закрывают вопросы аудита, а не «всю Метрику».
@@ -27,8 +30,8 @@ PRESETS = {
 }
 
 
-def api(token, **params):
-    url = BASE + "?" + urllib.parse.urlencode(params, doseq=True)
+def api(token, base=None, **params):
+    url = (base or BASE) + "?" + urllib.parse.urlencode(params, doseq=True)
     req = urllib.request.Request(url, headers={"Authorization": f"OAuth {token}",
                                                "Accept": "application/json"})
     try:
@@ -47,6 +50,7 @@ def main():
     a.add_argument("--out-dir", default="data")
     a.add_argument("--limit", type=int, default=200)
     a.add_argument("--only", nargs="*")
+    a.add_argument("--goal", help="идентификатор главной цели; по умолчанию выбирается сама")
     args = a.parse_args()
 
     token = os.environ.get("METRIKA_TOKEN")
@@ -98,6 +102,66 @@ def main():
                                      "reaches": res["totals"][i],
                                      "conversion_rate": res["totals"][half + i]}
         save("goals", {"period": [d1, d2], "goals": out})
+
+    # ── главная цель: самая результативная из неслужебных
+    goals_data = None
+    path = os.path.join(args.out_dir, "goals.json")
+    if os.path.exists(path):
+        goals_data = json.load(open(path, encoding="utf-8"))["goals"]
+    main_goal = args.goal
+    if not main_goal and goals_data:
+        real = {k: v for k, v in goals_data.items()
+                if not JUNK_GOAL.search(v.get("name", "")) and v.get("reaches", 0) > 0}
+        if real:
+            main_goal = max(real, key=lambda k: real[k]["reaches"])
+    if main_goal and goals_data:
+        print(f"главная цель: {main_goal} — {goals_data.get(main_goal, {}).get('name')}",
+              file=sys.stderr)
+
+    # ── динамика по дням с достижениями главной цели: ловит обрывы учёта
+    if main_goal and (not args.only or "days_goal" in args.only):
+        res = api(token, ids=counter, dimensions="ym:s:date",
+                  metrics=f"ym:s:visits,ym:s:goal{main_goal}reaches,"
+                          f"ym:s:goal{main_goal}conversionRate",
+                  date1=d1, date2=d2, sort="ym:s:date", limit=400, accuracy="full")
+        if not res.get("errors"):
+            res["main_goal"] = main_goal
+            res["main_goal_name"] = (goals_data or {}).get(main_goal, {}).get("name")
+            save("days_goal", res)
+
+    # ── посадочные с конверсией по главной цели, а не только с отказами
+    if main_goal and (not args.only or "landing_goal" in args.only):
+        res = api(token, ids=counter, dimensions="ym:s:startURL",
+                  metrics=f"ym:s:visits,ym:s:bounceRate,ym:s:goal{main_goal}reaches,"
+                          f"ym:s:goal{main_goal}conversionRate",
+                  date1=d1, date2=d2, sort="-ym:s:visits", limit=args.limit, accuracy="full")
+        if not res.get("errors"):
+            res["main_goal"] = main_goal
+            res["main_goal_name"] = (goals_data or {}).get(main_goal, {}).get("name")
+            save("landing_goal", res)
+
+    # ── здоровье трафика: роботы, новизна аудитории, доля мобильных
+    if not args.only or "health" in args.only:
+        res = api(token, ids=counter, date1=d1, date2=d2, accuracy="full",
+                  metrics="ym:s:visits,ym:s:users,ym:s:robotPercentage,"
+                          "ym:s:percentNewVisitors,ym:s:mobilePercentage")
+        if not res.get("errors"):
+            save("health", res)
+
+    # ── сравнение с предыдущим периодом такой же длины
+    if not args.only or "compare" in args.only:
+        span = args.days
+        res = api(token, base=COMPARE, ids=counter, accuracy="full",
+                  metrics="ym:s:visits,ym:s:users,ym:s:bounceRate,"
+                          "ym:s:avgVisitDurationSeconds"
+                          + (f",ym:s:goal{main_goal}reaches" if main_goal else ""),
+                  date1_a=d1, date2_a=d2,
+                  date1_b=f"{span * 2}daysAgo", date2_b=f"{span + 1}daysAgo")
+        if not res.get("errors"):
+            res["main_goal"] = main_goal
+            save("compare", res)
+        else:
+            print("сравнение: " + res["message"][:120], file=sys.stderr)
 
     print(args.out_dir)
 
