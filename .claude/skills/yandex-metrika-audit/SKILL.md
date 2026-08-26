@@ -61,6 +61,7 @@ metadata:
 | `metrika/collect.py` | Слепок счётчика: настройки, цели, фильтры, сегменты, доступы |
 | `metrika/fetch.py` | Отчёты: источники, кампании Директа, посадочные, устройства, гео, цели |
 | `metrika/checks.py` | Реестр автопроверок, балл и грейд |
+| `metrika/dashboard.py` | HTML-отчёт: вердикт, план правок, цели, трафик, кампании, посадочные |
 
 Смежное: `../yandex-direct-audit/audit/scoring.md` (формула балла — общая для обоих
 аудитов), `../yandex-direct-analyst/analysis/diagnostics.md` (расхождения Директ / Метрика).
@@ -79,6 +80,8 @@ python3 $S/collect.py --out $P/metrika/snapshot.json
 python3 $S/fetch.py --days 30 --out-dir $P/data/metrika
 python3 $S/checks.py $P/metrika/snapshot.json --reports $P/data/metrika \
     --json $P/metrika/checks.json
+python3 $S/dashboard.py --snapshot $P/metrika/snapshot.json --reports $P/data/metrika \
+    --period "27.07 — 25.08.2026" --out $P/metrika/audit.html
 ```
 
 Счётчик берётся из `METRIKA_COUNTER`, другой задаётся флагом `--counter`.
@@ -98,8 +101,11 @@ python3 $S/checks.py $P/metrika/snapshot.json --reports $P/data/metrika \
    определения целей, соответствие типа бизнеса, дубли по смыслу.
 6. **Сверка с Директом** — сравнить конверсии по кампаниям в двух системах
    (`metrika/reports.md`, раздел про кампании).
-7. **Отчёт**: находки по приоритету, что чинить в первую очередь, что перепроверить
-   после правок.
+7. **Отчёт**: текстом — вывод `checks.py`; визуально — `dashboard.py`. Разделы:
+   вердикт с баллом → план правок → цели → трафик → кампании Директа → посадочные →
+   настройки счётчика. Оформление и правила общие с дашбордом аудита Директа
+   (`../yandex-direct-audit/audit/dashboard.md`): структура сверху, сырьё под спойлером,
+   тёмная тема и печать в PDF.
 
 ## Что аудит Метрики даёт аудиту Директа
 
